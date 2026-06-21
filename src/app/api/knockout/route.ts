@@ -14,11 +14,15 @@ export async function GET() {
       const [t1] = m.team1Id ? await getDb().select({ name: teams.name }).from(teams).where(eq(teams.id, m.team1Id)) : [null];
       const [t2] = m.team2Id ? await getDb().select({ name: teams.name }).from(teams).where(eq(teams.id, m.team2Id)) : [null];
       const [w] = m.winnerId ? await getDb().select({ name: teams.name }).from(teams).where(eq(teams.id, m.winnerId)) : [null];
+      const [sub] = m.submittedBy ? await getDb().select({ name: teams.name }).from(teams).where(eq(teams.id, m.submittedBy)) : [null];
+      const [con] = m.confirmedBy ? await getDb().select({ name: teams.name }).from(teams).where(eq(teams.id, m.confirmedBy)) : [null];
       return {
         ...m,
         team1Name: t1?.name ?? "TBD",
         team2Name: t2?.name ?? "TBD",
         winnerName: w?.name ?? null,
+        submittedByName: sub?.name ?? null,
+        confirmedByName: con?.name ?? null,
       };
     })
   );

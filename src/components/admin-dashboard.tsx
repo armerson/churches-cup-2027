@@ -17,6 +17,8 @@ type Match = {
   score1: number | null;
   score2: number | null;
   status: string;
+  submittedByName: string | null;
+  confirmedByName: string | null;
 };
 
 type KoMatch = {
@@ -34,6 +36,8 @@ type KoMatch = {
   penScore2: number | null;
   winnerId: number | null;
   winnerName: string | null;
+  submittedByName: string | null;
+  confirmedByName: string | null;
   kickoff: string | null;
   pitch: string | null;
 };
@@ -675,6 +679,13 @@ function AdminScores({ matches, onRefresh, pitchColors }: { matches: Match[]; on
               }`}>{m.status}</span>
             </div>
           </div>
+          {(m.submittedByName || m.confirmedByName) && (
+            <div className="flex gap-3 mt-1 text-[10px] text-gray-500">
+              {m.submittedByName && <span>Submitted: <span className="font-medium text-gray-700">{m.submittedByName}</span></span>}
+              {m.confirmedByName && <span>Confirmed: <span className="font-medium text-gray-700">{m.confirmedByName}</span></span>}
+              {m.status === "pending" && !m.confirmedByName && <span className="text-amber-600 font-medium">Awaiting confirmation</span>}
+            </div>
+          )}
 
           {editing === m.id ? (
             <div className="mt-3 flex items-center gap-2">
@@ -811,6 +822,14 @@ function AdminKnockout({ matches, onRefresh, pitchColors, koComps }: { matches: 
                           <span className="text-xs text-gray-400">—</span>
                         )}
                       </div>
+
+                      {(m.submittedByName || m.confirmedByName) && (
+                        <div className="flex gap-3 mt-1 text-[10px] text-gray-500">
+                          {m.submittedByName && <span>Submitted: <span className="font-medium text-gray-700">{m.submittedByName}</span></span>}
+                          {m.confirmedByName && <span>Confirmed: <span className="font-medium text-gray-700">{m.confirmedByName}</span></span>}
+                          {m.submittedByName && !m.confirmedByName && !m.winnerId && <span className="text-amber-600 font-medium">Awaiting confirmation</span>}
+                        </div>
+                      )}
 
                       {!m.winnerId && m.team1Id && m.team2Id && (
                         editing === m.matchId ? (

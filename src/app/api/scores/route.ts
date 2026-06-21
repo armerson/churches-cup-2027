@@ -17,18 +17,21 @@ export async function GET() {
       score2: groupMatches.score2,
       status: groupMatches.status,
       submittedBy: groupMatches.submittedBy,
+      confirmedBy: groupMatches.confirmedBy,
     })
     .from(groupMatches)
     .leftJoin(teams, eq(teams.id, groupMatches.team1Id))
     .orderBy(groupMatches.kickoff, groupMatches.id);
 
-  // Get team2 names separately to avoid alias issues
-  const withNames = await Promise.all(
-    matches.map(async (m) => {
-      const [t2] = await getDb().select({ name: teams.name }).from(teams).where(eq(teams.id, m.team2Id));
-      return { ...m, team2: t2?.name ?? "TBD" };
-    })
-  );
+  const allTeams = await getDb().select({ id: teams.id, name: teams.name }).from(teams);
+  const teamMap = Object.fromEntries(allTeams.map((t) => [t.id, t.name]));
+
+  const withNames = matches.map((m) => ({
+    ...m,
+    team2: teamMap[m.team2Id] ?? "TBD",
+    submittedByName: m.submittedBy ? teamMap[m.submittedBy] ?? null : null,
+    confirmedByName: m.confirmedBy ? teamMap[m.confirmedBy] ?? null : null,
+  }));
 
   return NextResponse.json(withNames);
 }
