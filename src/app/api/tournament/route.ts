@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db as getDb } from "@/lib/db";
-import { tournament, teams } from "@/lib/schema";
-import { eq } from "drizzle-orm";
+import { tournament, teams, groupMatches, koMatches, scorers, rosters } from "@/lib/schema";
+import { eq, sql } from "drizzle-orm";
 
 export async function GET() {
   let [config] = await getDb().select().from(tournament);
@@ -25,6 +25,76 @@ export async function GET() {
     totalTeams: allTeams.length,
     totalGroups: Object.keys(groups).length,
   });
+}
+
+function addMinutes(time: string, mins: number): string {
+  const [h, m] = time.split(":").map(Number);
+  const total = h * 60 + m + mins;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function roundRobinPairings(n: number): [number, number][][] {
+  const rounds: [number, number][][] = [];
+  const indices = Array.from({ length: n }, (_, i) => i);
+  for (let r = 0; r < n - 1; r++) {
+    const pairs: [number, number][] = [];
+    for (let i = 0; i < n / 2; i++) {
+      pairs.push([indices[i], indices[n - 1 - i]]);
+    }
+    rounds.push(pairs);
+    const last = indices.pop()!;
+    indices.splice(1, 0, last);
+  }
+  return rounds;
+}
+
+function generateKoBracket(
+  koComps: { key: string; label: string; qualifyPositions: number[]; format: string }[],
+  pitches: string[],
+  gapMins: number,
+  groupStageEndTime: string,
+  numGroups: number,
+) {
+  const koFixtures: { matchId: string; comp: string; round: string; num: number; kickoff: string; pitch: string }[] = [];
+  let currentTime = addMinutes(groupStageEndTime, gapMins * 2);
+
+  for (const comp of koComps) {
+    const totalTeams = comp.qualifyPositions.length * numGroups;
+    const rounds: { name: string; count: number }[] = [];
+    let remaining = totalTeams;
+
+    if (remaining >= 16) rounds.push({ name: "r16", count: 8 });
+    else if (remaining > 4) rounds.push({ name: "r1", count: Math.floor(remaining / 2) });
+
+    remaining = rounds.length > 0 ? rounds[0].count : remaining;
+    if (remaining >= 8) { rounds.push({ name: "qf", count: 4 }); remaining = 4; }
+    if (remaining >= 4) { rounds.push({ name: "sf", count: 2 }); remaining = 2; }
+    if (remaining >= 2) rounds.push({ name: "final", count: 1 });
+
+    const prefix = comp.key.charAt(0);
+    for (const round of rounds) {
+      const slotsNeeded = round.count;
+      const timeSlots = Math.ceil(slotsNeeded / pitches.length);
+      let slotTime = currentTime;
+      let matchNum = 1;
+      for (let slot = 0; slot < timeSlots; slot++) {
+        const matchesThisSlot = Math.min(pitches.length, slotsNeeded - slot * pitches.length);
+        for (let p = 0; p < matchesThisSlot; p++) {
+          koFixtures.push({
+            matchId: `${prefix}-${round.name}${round.count > 1 ? `-${matchNum}` : ""}`,
+            comp: comp.key,
+            round: round.name,
+            num: matchNum++,
+            kickoff: slotTime,
+            pitch: pitches[p],
+          });
+        }
+        slotTime = addMinutes(slotTime, gapMins);
+      }
+      currentTime = addMinutes(currentTime, timeSlots * gapMins + gapMins);
+    }
+  }
+  return koFixtures;
 }
 
 export async function POST(req: NextRequest) {
@@ -52,6 +122,125 @@ export async function POST(req: NextRequest) {
       [config] = await getDb().update(tournament).set(updates).where(eq(tournament.id, config.id)).returning();
     }
     return NextResponse.json({ success: true, config });
+  }
+
+  if (action === "setup") {
+    const { groups: groupsInput, name, year, pitches: pitchesInput, gameDurationMins, maxSquadSize, groupStageGapMins, groupStageStartTime, koCompetitions } = body;
+
+    if (!groupsInput || typeof groupsInput !== "object" || Object.keys(groupsInput).length === 0) {
+      return NextResponse.json({ error: "Groups with teams are required" }, { status: 400 });
+    }
+
+    const db = getDb();
+    const pitchesList: string[] = pitchesInput || ["orange", "blue", "yellow", "red"];
+    const gap = groupStageGapMins || 14;
+    const startTime = groupStageStartTime || "10:00";
+    const teamsPerGroup = Object.values(groupsInput as Record<string, string[]>)[0]?.length || 4;
+    const numGroups = Object.keys(groupsInput).length;
+
+    // Clear existing data
+    await db.delete(scorers);
+    await db.delete(rosters);
+    await db.delete(groupMatches);
+    await db.delete(koMatches);
+    await db.delete(teams);
+
+    // Create teams
+    const teamIds: Record<string, number> = {};
+    let pinIdx = 0;
+    for (const [group, teamNames] of Object.entries(groupsInput as Record<string, string[]>)) {
+      for (const teamName of teamNames) {
+        pinIdx++;
+        const pin = String(pinIdx).padStart(4, "0");
+        const [row] = await db.insert(teams).values({ name: teamName, groupLetter: group, pin }).returning();
+        teamIds[teamName] = row.id;
+      }
+    }
+
+    // Generate round-robin schedule
+    const groupEntries = Object.entries(groupsInput as Record<string, string[]>);
+    const pairingsPerGroup = roundRobinPairings(teamsPerGroup);
+    const numRounds = teamsPerGroup - 1;
+
+    // Schedule: play groups in parallel across pitches
+    // Each timeslot can fit up to pitches.length matches
+    // We interleave groups to maximise rest
+    const allFixtures: { t1: string; t2: string; group: string; round: number }[] = [];
+    for (let r = 0; r < numRounds; r++) {
+      for (const [group, teamNames] of groupEntries) {
+        const pairs = pairingsPerGroup[r];
+        for (const [i, j] of pairs) {
+          allFixtures.push({ t1: teamNames[i], t2: teamNames[j], group, round: r });
+        }
+      }
+    }
+
+    // Assign times: fill pitches per timeslot
+    let currentKickoff = startTime;
+    let pitchIdx = 0;
+    for (const fix of allFixtures) {
+      await db.insert(groupMatches).values({
+        team1Id: teamIds[fix.t1],
+        team2Id: teamIds[fix.t2],
+        groupLetter: fix.group,
+        kickoff: currentKickoff,
+        pitch: pitchesList[pitchIdx],
+      });
+      pitchIdx++;
+      if (pitchIdx >= pitchesList.length) {
+        pitchIdx = 0;
+        currentKickoff = addMinutes(currentKickoff, gap);
+      }
+    }
+    // If we used some pitches in the last slot, advance time
+    const groupStageEndTime = pitchIdx > 0 ? addMinutes(currentKickoff, gap) : currentKickoff;
+
+    // Generate KO bracket
+    const koComps = koCompetitions || [
+      { key: "championship", label: "Championship", qualifyPositions: [1, 2], format: "r16" },
+      { key: "shield", label: "Shield", qualifyPositions: [3], format: "r1-8" },
+      { key: "plate", label: "Plate", qualifyPositions: [4], format: "r1-4" },
+    ];
+    const koFixtures = generateKoBracket(koComps, pitchesList, gap, groupStageEndTime, numGroups);
+
+    for (const m of koFixtures) {
+      await db.insert(koMatches).values({
+        matchId: m.matchId,
+        competition: m.comp,
+        round: m.round,
+        matchNum: m.num,
+        kickoff: m.kickoff,
+        pitch: m.pitch,
+      });
+    }
+
+    // Update tournament config
+    let [config] = await db.select().from(tournament);
+    const configData = {
+      name: name || "Tournament",
+      year: year || new Date().getFullYear(),
+      teamsPerGroup,
+      gameDurationMins: gameDurationMins || 12,
+      maxSquadSize: maxSquadSize || 20,
+      pitches: pitchesList,
+      groupStageGapMins: gap,
+      groupStageStartTime: startTime,
+      koCompetitions: koComps,
+      setupComplete: true,
+      updatedAt: new Date(),
+    };
+    if (!config) {
+      await db.insert(tournament).values(configData);
+    } else {
+      await db.update(tournament).set(configData).where(eq(tournament.id, config.id));
+    }
+
+    return NextResponse.json({
+      success: true,
+      teams: Object.keys(teamIds).length,
+      groupMatches: allFixtures.length,
+      koMatches: koFixtures.length,
+    });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

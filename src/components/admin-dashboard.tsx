@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTournament, getPitchClass } from "@/lib/use-tournament";
 
-type Tab = "scores" | "knockout" | "golden-boot" | "notices";
+type Tab = "setup" | "scores" | "knockout" | "golden-boot" | "notices";
 
 type Match = {
   id: number;
@@ -63,6 +63,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   }, [fetchData]);
 
   const tabs: { id: Tab; label: string }[] = [
+    { id: "setup", label: "Setup" },
     { id: "scores", label: "Scores" },
     { id: "knockout", label: "Knockout" },
     { id: "golden-boot", label: "Boot" },
@@ -98,11 +99,289 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       </nav>
 
       <main className="flex-1 p-4">
+        {tab === "setup" && <AdminSetup config={config} />}
         {tab === "scores" && <AdminScores matches={matches} onRefresh={fetchData} pitchColors={config?.pitchColors || {}} />}
         {tab === "knockout" && <AdminKnockout matches={koMatches} onRefresh={fetchData} pitchColors={config?.pitchColors || {}} koComps={config?.koCompetitions || []} />}
         {tab === "golden-boot" && <AdminGoldenBoot data={goldenBoot} />}
         {tab === "notices" && <AdminNotices notices={notices} onRefresh={fetchData} />}
       </main>
+    </div>
+  );
+}
+
+const AVAILABLE_COLORS: { name: string; classes: string }[] = [
+  { name: "orange", classes: "bg-orange-500 text-white" },
+  { name: "blue", classes: "bg-[#274296] text-white" },
+  { name: "yellow", classes: "bg-yellow-400 text-gray-900" },
+  { name: "red", classes: "bg-red-600 text-white" },
+  { name: "green", classes: "bg-green-600 text-white" },
+  { name: "purple", classes: "bg-purple-600 text-white" },
+  { name: "pink", classes: "bg-pink-500 text-white" },
+  { name: "white", classes: "bg-white text-gray-900 border border-gray-300" },
+];
+
+function AdminSetup({ config }: { config: any }) {
+  const [step, setStep] = useState(0);
+  const [name, setName] = useState(config?.name || "");
+  const [year, setYear] = useState(String(config?.year || new Date().getFullYear()));
+  const [gameDuration, setGameDuration] = useState(String(config?.gameDurationMins || 12));
+  const [maxSquad, setMaxSquad] = useState(String(config?.maxSquadSize || 20));
+  const [gapMins, setGapMins] = useState(String(config?.groupStageGapMins || 14));
+  const [startTime, setStartTime] = useState(config?.groupStageStartTime || "10:00");
+  const [numGroups, setNumGroups] = useState(String(config?.totalGroups || 8));
+  const [teamsPerGroup, setTeamsPerGroup] = useState(String(config?.teamsPerGroup || 4));
+  const [selectedPitches, setSelectedPitches] = useState<string[]>((config?.pitches as string[]) || ["orange", "blue", "yellow", "red"]);
+  const [groups, setGroups] = useState<Record<string, string[]>>(() => {
+    if (config?.groups && Object.keys(config.groups).length > 0) return config.groups;
+    const g: Record<string, string[]> = {};
+    const n = Number(numGroups) || 8;
+    const tpg = Number(teamsPerGroup) || 4;
+    for (let i = 0; i < n; i++) {
+      g[String.fromCharCode(65 + i)] = Array(tpg).fill("");
+    }
+    return g;
+  });
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState("");
+
+  function rebuildGroups() {
+    const n = Number(numGroups) || 1;
+    const tpg = Number(teamsPerGroup) || 2;
+    const newGroups: Record<string, string[]> = {};
+    for (let i = 0; i < n; i++) {
+      const letter = String.fromCharCode(65 + i);
+      const existing = groups[letter] || [];
+      newGroups[letter] = Array.from({ length: tpg }, (_, j) => existing[j] || "");
+    }
+    setGroups(newGroups);
+  }
+
+  function togglePitch(pitch: string) {
+    setSelectedPitches((prev) =>
+      prev.includes(pitch) ? prev.filter((p) => p !== pitch) : [...prev, pitch]
+    );
+  }
+
+  async function handleGenerate() {
+    const allTeams = Object.values(groups).flat();
+    const emptyTeams = allTeams.filter((t) => !t.trim());
+    if (emptyTeams.length > 0) {
+      setResult(`Please fill in all ${emptyTeams.length} empty team name(s).`);
+      return;
+    }
+    if (selectedPitches.length === 0) {
+      setResult("Please select at least one pitch.");
+      return;
+    }
+    if (!name.trim()) {
+      setResult("Please enter a tournament name.");
+      return;
+    }
+
+    const msg = `This will delete ALL existing teams, matches, scores, and rosters. Create new tournament "${name.trim()}" with ${allTeams.length} teams?`;
+    if (!confirm(msg)) return;
+
+    setBusy(true);
+    setResult("");
+    const pitchColors = Object.fromEntries(
+      selectedPitches.map((p) => [p, AVAILABLE_COLORS.find((c) => c.name === p)?.classes || "bg-gray-200 text-gray-800"])
+    );
+
+    const res = await fetch("/api/tournament", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "setup",
+        name: name.trim(),
+        year: Number(year),
+        groups,
+        pitches: selectedPitches,
+        pitchColors,
+        gameDurationMins: Number(gameDuration),
+        maxSquadSize: Number(maxSquad),
+        groupStageGapMins: Number(gapMins),
+        groupStageStartTime: startTime,
+        koCompetitions: [
+          { key: "championship", label: "Championship", qualifyPositions: [1, 2], format: "r16" },
+          ...(Number(teamsPerGroup) >= 3 ? [{ key: "shield", label: "Shield", qualifyPositions: [3], format: "r1" }] : []),
+          ...(Number(teamsPerGroup) >= 4 ? [{ key: "plate", label: "Plate", qualifyPositions: [4], format: "r1" }] : []),
+        ],
+      }),
+    });
+    const data = await res.json();
+    setBusy(false);
+    if (data.error) {
+      setResult(`Error: ${data.error}`);
+    } else {
+      setResult(`Tournament created! ${data.teams} teams, ${data.groupMatches} group matches, ${data.koMatches} KO fixtures. Team PINs: 0001–${String(data.teams).padStart(4, "0")}. Reload to see changes.`);
+    }
+  }
+
+  const steps = [
+    { label: "Basics", icon: "1" },
+    { label: "Pitches", icon: "2" },
+    { label: "Teams", icon: "3" },
+    { label: "Review", icon: "4" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-lg font-bold">Tournament Setup</h2>
+
+      <div className="flex gap-1">
+        {steps.map((s, i) => (
+          <button key={i} onClick={() => setStep(i)}
+            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-colors ${
+              step === i ? "bg-[#274296] text-white" : i < step ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+            }`}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {step === 0 && (
+        <div className="bg-white rounded-lg p-4 shadow-sm border space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Tournament Name</label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Schools Cup 2027" className="w-full border rounded-lg px-3 py-2.5 text-sm" />
+          </div>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Year</label>
+              <input type="number" value={year} onChange={(e) => setYear(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2.5 text-sm" />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Game Duration (mins)</label>
+              <input type="number" min="5" max="90" value={gameDuration} onChange={(e) => setGameDuration(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2.5 text-sm" />
+            </div>
+          </div>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Max Squad Size</label>
+              <input type="number" min="5" max="50" value={maxSquad} onChange={(e) => setMaxSquad(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2.5 text-sm" />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Gap Between Games (mins)</label>
+              <input type="number" min="1" max="60" value={gapMins} onChange={(e) => setGapMins(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2.5 text-sm" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">First Kick-off</label>
+            <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm" />
+          </div>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Number of Groups</label>
+              <input type="number" min="1" max="16" value={numGroups}
+                onChange={(e) => { setNumGroups(e.target.value); }}
+                onBlur={rebuildGroups}
+                className="w-full border rounded-lg px-3 py-2.5 text-sm" />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Teams per Group</label>
+              <input type="number" min="2" max="8" value={teamsPerGroup}
+                onChange={(e) => { setTeamsPerGroup(e.target.value); }}
+                onBlur={rebuildGroups}
+                className="w-full border rounded-lg px-3 py-2.5 text-sm" />
+            </div>
+          </div>
+          <button onClick={() => { rebuildGroups(); setStep(1); }}
+            className="w-full bg-[#274296] text-white font-semibold py-2.5 rounded-lg text-sm">
+            Next: Pitches
+          </button>
+        </div>
+      )}
+
+      {step === 1 && (
+        <div className="bg-white rounded-lg p-4 shadow-sm border space-y-4">
+          <p className="text-sm text-gray-600">Select which pitches are available:</p>
+          <div className="grid grid-cols-2 gap-2">
+            {AVAILABLE_COLORS.map((c) => (
+              <button key={c.name} onClick={() => togglePitch(c.name)}
+                className={`px-4 py-3 rounded-lg text-sm font-semibold transition-all ${c.classes} ${
+                  selectedPitches.includes(c.name) ? "ring-2 ring-offset-2 ring-[#274296] scale-105" : "opacity-40"
+                }`}>
+                {c.name.charAt(0).toUpperCase() + c.name.slice(1)} Pitch
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500">{selectedPitches.length} pitch{selectedPitches.length !== 1 ? "es" : ""} selected</p>
+          <button onClick={() => setStep(2)} disabled={selectedPitches.length === 0}
+            className="w-full bg-[#274296] text-white font-semibold py-2.5 rounded-lg text-sm disabled:opacity-50">
+            Next: Teams
+          </button>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">Enter team names for each group:</p>
+          {Object.entries(groups).sort().map(([letter, teamNames]) => (
+            <div key={letter} className="bg-white rounded-lg p-3 shadow-sm border">
+              <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Group {letter}</h3>
+              <div className="space-y-1.5">
+                {teamNames.map((t, i) => (
+                  <input key={`${letter}-${i}`} type="text" value={t}
+                    onChange={(e) => {
+                      const updated = { ...groups };
+                      updated[letter] = [...updated[letter]];
+                      updated[letter][i] = e.target.value;
+                      setGroups(updated);
+                    }}
+                    placeholder={`Team ${i + 1}`}
+                    className="w-full border rounded-lg px-3 py-2 text-sm" />
+                ))}
+              </div>
+            </div>
+          ))}
+          <button onClick={() => setStep(3)}
+            className="w-full bg-[#274296] text-white font-semibold py-2.5 rounded-lg text-sm">
+            Next: Review
+          </button>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="bg-white rounded-lg p-4 shadow-sm border space-y-4">
+          <h3 className="font-bold text-sm">Review & Generate</h3>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between"><span className="text-gray-500">Tournament</span><span className="font-medium">{name || "—"} {year}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Groups</span><span className="font-medium">{Object.keys(groups).length} groups of {teamsPerGroup}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Total Teams</span><span className="font-medium">{Object.values(groups).flat().length}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Pitches</span><span className="font-medium">{selectedPitches.join(", ")}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Game Duration</span><span className="font-medium">{gameDuration} mins</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Gap Between Games</span><span className="font-medium">{gapMins} mins</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">First Kick-off</span><span className="font-medium">{startTime}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Max Squad</span><span className="font-medium">{maxSquad} players</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">KO Competitions</span>
+              <span className="font-medium">
+                Championship{Number(teamsPerGroup) >= 3 ? ", Shield" : ""}{Number(teamsPerGroup) >= 4 ? ", Plate" : ""}
+              </span>
+            </div>
+          </div>
+
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <p className="text-xs text-amber-800 font-medium">This will delete all existing tournament data (teams, matches, scores, rosters) and create a fresh tournament.</p>
+          </div>
+
+          <button onClick={handleGenerate} disabled={busy}
+            className="w-full bg-green-600 text-white font-semibold py-3 rounded-lg text-sm disabled:opacity-50">
+            {busy ? "Generating..." : "Generate Tournament"}
+          </button>
+
+          {result && (
+            <div className={`text-sm font-medium rounded-lg px-3 py-2 ${
+              result.startsWith("Error") ? "bg-red-50 text-red-700" : result.startsWith("Please") ? "bg-amber-50 text-amber-700" : "bg-green-50 text-green-700"
+            }`}>{result}</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
