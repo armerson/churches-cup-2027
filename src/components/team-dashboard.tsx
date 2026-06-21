@@ -196,7 +196,6 @@ function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; sessio
   const [score1, setScore1] = useState("");
   const [score2, setScore2] = useState("");
   const [myScorers, setMyScorers] = useState<string[]>([]);
-  const [oppScorers, setOppScorers] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -205,11 +204,10 @@ function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; sessio
   const myGoals = Number(score1) || 0;
   const oppGoals = Number(score2) || 0;
   const myScorersValid = myGoals === 0 || (myScorers.slice(0, myGoals).every((s) => s.trim().length > 0));
-  const oppScorersValid = oppGoals === 0 || (oppScorers.slice(0, oppGoals).every((s) => s.trim().length > 0));
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedMatch || !myScorersValid || !oppScorersValid) return;
+    if (!selectedMatch || !myScorersValid) return;
     setSubmitting(true);
     setMsg("");
     const isTeam1 = selectedMatch.team1 === session.teamName;
@@ -223,7 +221,6 @@ function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; sessio
         score2: isTeam1 ? oppGoals : myGoals,
         submittedById: session.teamId,
         myScorers: myScorers.slice(0, myGoals).map((s) => s.trim()),
-        oppScorers: oppScorers.slice(0, oppGoals).map((s) => s.trim()),
       }),
     });
     const data = await res.json();
@@ -231,12 +228,11 @@ function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; sessio
     if (data.error) {
       setMsg(data.error);
     } else {
-      setMsg("Score submitted! Waiting for opponent to confirm.");
+      setMsg("Score submitted! Waiting for opponent to confirm and add their scorers.");
       setSelectedMatch(null);
       setScore1("");
       setScore2("");
       setMyScorers([]);
-      setOppScorers([]);
       onSubmitted();
     }
   }
@@ -251,7 +247,7 @@ function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; sessio
           {available.map((m) => {
             const opp = m.team1 === session.teamName ? m.team2 : m.team1;
             return (
-              <button key={m.id} onClick={() => { setSelectedMatch(m); setMsg(""); setMyScorers([]); setOppScorers([]); }}
+              <button key={m.id} onClick={() => { setSelectedMatch(m); setMsg(""); setMyScorers([]); }}
                 className={`w-full text-left bg-white rounded-lg p-4 shadow-sm border transition-colors ${
                   selectedMatch?.id === m.id ? "border-[#274296] ring-2 ring-blue-200" : ""
                 }`}>
@@ -275,14 +271,13 @@ function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; sessio
             </div>
             <div className="flex-1">
               <label className="block text-xs font-semibold text-gray-600 mb-1">Opponent</label>
-              <input type="number" min="0" max="99" value={score2} onChange={(e) => { setScore2(e.target.value); setOppScorers([]); }}
+              <input type="number" min="0" max="99" value={score2} onChange={(e) => setScore2(e.target.value)}
                 className="w-full border rounded-lg px-3 py-3 text-center text-2xl font-bold" required />
             </div>
           </div>
           <ScorerInputs count={myGoals} scorers={myScorers} onChange={setMyScorers} label={`${session.teamName} scorers`} />
-          <ScorerInputs count={oppGoals} scorers={oppScorers} onChange={setOppScorers}
-            label={`${selectedMatch.team1 === session.teamName ? selectedMatch.team2 : selectedMatch.team1} scorers`} />
-          <button type="submit" disabled={submitting || !myScorersValid || !oppScorersValid}
+          <p className="text-xs text-gray-400">Your opponent will add their own scorers when they confirm.</p>
+          <button type="submit" disabled={submitting || !myScorersValid}
             className="w-full bg-green-600 text-white font-semibold py-3 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors">
             {submitting ? "Submitting..." : "Submit Score"}
           </button>
@@ -299,13 +294,36 @@ function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; sessio
 
 function ConfirmTab({ matches, session, onConfirmed }: { matches: Match[]; session: Session; onConfirmed: () => void }) {
   const [confirming, setConfirming] = useState<number | null>(null);
+  const [scorersMap, setScorersMap] = useState<Record<number, string[]>>({});
+
+  function getMyGoals(m: Match) {
+    const isTeam1 = m.team1 === session.teamName;
+    return isTeam1 ? (m.score1 ?? 0) : (m.score2 ?? 0);
+  }
+
+  function getScorers(matchId: number) {
+    return scorersMap[matchId] || [];
+  }
+
+  function setScorers(matchId: number, s: string[]) {
+    setScorersMap((prev) => ({ ...prev, [matchId]: s }));
+  }
 
   async function handleAction(match: Match, action: "confirm" | "dispute") {
+    const myGoals = getMyGoals(match);
+    const mySc = getScorers(match.id);
+    if (action === "confirm" && myGoals > 0 && mySc.slice(0, myGoals).some((s) => !s.trim())) return;
+
     setConfirming(match.id);
     await fetch("/api/scores", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, matchId: match.id, confirmedById: session.teamId }),
+      body: JSON.stringify({
+        action,
+        matchId: match.id,
+        confirmedById: session.teamId,
+        myScorers: action === "confirm" ? mySc.slice(0, myGoals).map((s) => s.trim()) : undefined,
+      }),
     });
     setConfirming(null);
     onConfirmed();
@@ -320,14 +338,21 @@ function ConfirmTab({ matches, session, onConfirmed }: { matches: Match[]; sessi
         const opp = isTeam1 ? m.team2 : m.team1;
         const myScore = isTeam1 ? m.score1 : m.score2;
         const oppScore = isTeam1 ? m.score2 : m.score1;
+        const myGoals = myScore ?? 0;
+        const mySc = getScorers(m.id);
+        const scorersValid = myGoals === 0 || (mySc.slice(0, myGoals).every((s) => s.trim().length > 0));
         return (
           <div key={m.id} className="bg-white rounded-lg p-4 shadow-sm border space-y-3">
             <div className="flex justify-between items-center">
               <p className="font-semibold">{session.teamName} vs {opp}</p>
               <span className="text-2xl font-bold">{myScore}–{oppScore}</span>
             </div>
+            {myGoals > 0 && (
+              <ScorerInputs count={myGoals} scorers={mySc} onChange={(s) => setScorers(m.id, s)}
+                label={`${session.teamName} scorers`} />
+            )}
             <div className="flex gap-2">
-              <button onClick={() => handleAction(m, "confirm")} disabled={confirming === m.id}
+              <button onClick={() => handleAction(m, "confirm")} disabled={confirming === m.id || !scorersValid}
                 className="flex-1 bg-green-600 text-white font-semibold py-2.5 rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm">
                 {confirming === m.id ? "..." : "Confirm"}
               </button>
@@ -438,9 +463,9 @@ function KnockoutTab({ matches, session, onRefresh, pitchColors, koComps }: { ma
   const [ps2, setPs2] = useState("");
   const [winnerId, setWinnerId] = useState<number | null>(null);
   const [myScorers, setMyScorers] = useState<string[]>([]);
-  const [oppScorers, setOppScorers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [confirmScorers, setConfirmScorers] = useState<Record<string, string[]>>({});
   const [msg, setMsg] = useState("");
 
   const comps = koComps.map((c) => c.key);
@@ -462,9 +487,7 @@ function KnockoutTab({ matches, session, onRefresh, pitchColors, koComps }: { ma
     else if (apiScore2 > apiScore1) w = m.team2Id;
 
     const myGoals = sc1;
-    const oppGoals = sc2;
     if (myGoals > 0 && myScorers.slice(0, myGoals).some((s) => !s.trim())) return;
-    if (oppGoals > 0 && oppScorers.slice(0, oppGoals).some((s) => !s.trim())) return;
 
     setBusy(true);
     setMsg("");
@@ -481,7 +504,6 @@ function KnockoutTab({ matches, session, onRefresh, pitchColors, koComps }: { ma
         winnerId: w,
         submittedById: session.teamId,
         myScorers: myScorers.slice(0, myGoals).map((s) => s.trim()),
-        oppScorers: oppScorers.slice(0, oppGoals).map((s) => s.trim()),
       }),
     });
     const data = await res.json();
@@ -489,18 +511,29 @@ function KnockoutTab({ matches, session, onRefresh, pitchColors, koComps }: { ma
     if (data.error) {
       setMsg(data.error);
     } else {
-      setMsg("KO result submitted! Waiting for opponent to confirm.");
+      setMsg("KO result submitted! Waiting for opponent to confirm and add their scorers.");
       setEditing(null);
       onRefresh();
     }
   }
 
-  async function handleAction(matchId: string, act: "confirm" | "dispute") {
+  async function handleAction(matchId: string, act: "confirm" | "dispute", m: any) {
+    const isTeam1 = m.team1Id === session.teamId;
+    const myGoals = isTeam1 ? (m.score1 ?? 0) : (m.score2 ?? 0);
+    const mySc = confirmScorers[matchId] || [];
+
+    if (act === "confirm" && myGoals > 0 && mySc.slice(0, myGoals).some((s) => !s.trim())) return;
+
     setConfirming(matchId);
     await fetch("/api/knockout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: act, matchId, confirmedById: session.teamId }),
+      body: JSON.stringify({
+        action: act,
+        matchId,
+        confirmedById: session.teamId,
+        myScorers: act === "confirm" ? mySc.slice(0, myGoals).map((s) => s.trim()) : undefined,
+      }),
     });
     setConfirming(null);
     onRefresh();
@@ -551,22 +584,32 @@ function KnockoutTab({ matches, session, onRefresh, pitchColors, koComps }: { ma
                   )}
                 </div>
 
-                {canConfirm && (
-                  <div className="space-y-2">
-                    <p className="text-xs text-gray-600">Opponent submitted: <span className="font-bold">{myScore}–{oppScore}</span>
-                      {m.penScore1 !== null && <span> (Pens: {m.penScore1}–{m.penScore2})</span>}
-                    </p>
-                    <div className="flex gap-2">
-                      <button onClick={() => handleAction(m.matchId, "confirm")} disabled={confirming === m.matchId}
-                        className="flex-1 bg-green-600 text-white font-semibold py-2 rounded-lg text-sm disabled:opacity-50">Confirm</button>
-                      <button onClick={() => handleAction(m.matchId, "dispute")} disabled={confirming === m.matchId}
-                        className="flex-1 bg-red-600 text-white font-semibold py-2 rounded-lg text-sm disabled:opacity-50">Dispute</button>
+                {canConfirm && (() => {
+                  const confirmMyGoals = isTeam1 ? (m.score1 ?? 0) : (m.score2 ?? 0);
+                  const cSc = confirmScorers[m.matchId] || [];
+                  const cValid = confirmMyGoals === 0 || (cSc.slice(0, confirmMyGoals).every((s: string) => s.trim().length > 0));
+                  return (
+                    <div className="space-y-2">
+                      <p className="text-xs text-gray-600">Opponent submitted: <span className="font-bold">{myScore}–{oppScore}</span>
+                        {m.penScore1 !== null && <span> (Pens: {m.penScore1}–{m.penScore2})</span>}
+                      </p>
+                      {confirmMyGoals > 0 && (
+                        <ScorerInputs count={confirmMyGoals} scorers={cSc}
+                          onChange={(s) => setConfirmScorers((prev) => ({ ...prev, [m.matchId]: s }))}
+                          label={`${session.teamName} scorers`} />
+                      )}
+                      <div className="flex gap-2">
+                        <button onClick={() => handleAction(m.matchId, "confirm", m)} disabled={confirming === m.matchId || !cValid}
+                          className="flex-1 bg-green-600 text-white font-semibold py-2 rounded-lg text-sm disabled:opacity-50">Confirm</button>
+                        <button onClick={() => handleAction(m.matchId, "dispute", m)} disabled={confirming === m.matchId}
+                          className="flex-1 bg-red-600 text-white font-semibold py-2 rounded-lg text-sm disabled:opacity-50">Dispute</button>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {canSubmit && editing !== m.matchId && (
-                  <button onClick={() => { setEditing(m.matchId); setS1(""); setS2(""); setPs1(""); setPs2(""); setWinnerId(null); setMyScorers([]); setOppScorers([]); setMsg(""); }}
+                  <button onClick={() => { setEditing(m.matchId); setS1(""); setS2(""); setPs1(""); setPs2(""); setWinnerId(null); setMyScorers([]); setMsg(""); }}
                     className="text-[11px] text-[#274296] font-semibold hover:underline">Submit Result</button>
                 )}
 
@@ -581,13 +624,13 @@ function KnockoutTab({ matches, session, onRefresh, pitchColors, koComps }: { ma
                       <span className="text-gray-400 mt-4">–</span>
                       <div className="flex-1">
                         <label className="block text-[10px] font-semibold text-gray-500 mb-1">{opp}</label>
-                        <input type="number" min="0" max="99" value={s2} onChange={(e) => { setS2(e.target.value); setOppScorers([]); }}
+                        <input type="number" min="0" max="99" value={s2} onChange={(e) => setS2(e.target.value)}
                           className="w-full border rounded px-2 py-2 text-center text-lg font-bold" />
                       </div>
                     </div>
 
                     <ScorerInputs count={Number(s1) || 0} scorers={myScorers} onChange={setMyScorers} label={`${session.teamName} scorers`} />
-                    <ScorerInputs count={Number(s2) || 0} scorers={oppScorers} onChange={setOppScorers} label={`${opp} scorers`} />
+                    {(Number(s2) || 0) > 0 && <p className="text-xs text-gray-400">Opponent will add their scorers when they confirm.</p>}
 
                     {s1 && s2 && Number(s1) === Number(s2) && (
                       <div className="space-y-2">

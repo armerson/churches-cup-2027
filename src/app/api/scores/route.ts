@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   const { action } = body;
 
   if (action === "submit") {
-    const { matchId, score1, score2, submittedById, myScorers, oppScorers } = body;
+    const { matchId, score1, score2, submittedById, myScorers } = body;
 
     const [match] = await getDb()
       .select()
@@ -53,14 +53,9 @@ export async function POST(req: NextRequest) {
 
     const isTeam1 = match.team1Id === submittedById;
     const myGoals = isTeam1 ? score1 : score2;
-    const oppGoals = isTeam1 ? score2 : score1;
-    const oppTeamId = isTeam1 ? match.team2Id : match.team1Id;
 
     if (myGoals > 0 && (!myScorers || myScorers.length !== myGoals)) {
       return NextResponse.json({ error: `Enter all ${myGoals} scorer(s) for your team` }, { status: 400 });
-    }
-    if (oppGoals > 0 && (!oppScorers || oppScorers.length !== oppGoals)) {
-      return NextResponse.json({ error: `Enter all ${oppGoals} scorer(s) for opponent` }, { status: 400 });
     }
 
     const [updated] = await getDb()
@@ -80,17 +75,12 @@ export async function POST(req: NextRequest) {
         await getDb().insert(scorers).values({ groupMatchId: matchId, teamId: submittedById, playerName: name });
       }
     }
-    if (oppScorers?.length) {
-      for (const name of oppScorers) {
-        await getDb().insert(scorers).values({ groupMatchId: matchId, teamId: oppTeamId, playerName: name });
-      }
-    }
 
     return NextResponse.json({ success: true, match: updated });
   }
 
   if (action === "confirm") {
-    const { matchId, confirmedById, scorersList } = body;
+    const { matchId, confirmedById, myScorers } = body;
 
     const [match] = await getDb()
       .select()
@@ -100,6 +90,13 @@ export async function POST(req: NextRequest) {
     if (!match) return NextResponse.json({ error: "Match not found" }, { status: 404 });
     if (match.status !== "pending") return NextResponse.json({ error: "Not pending confirmation" }, { status: 400 });
     if (match.submittedBy === confirmedById) return NextResponse.json({ error: "Cannot confirm own submission" }, { status: 403 });
+
+    const isTeam1 = match.team1Id === confirmedById;
+    const myGoals = isTeam1 ? match.score1! : match.score2!;
+
+    if (myGoals > 0 && (!myScorers || myScorers.length !== myGoals)) {
+      return NextResponse.json({ error: `Enter all ${myGoals} scorer(s) for your team` }, { status: 400 });
+    }
 
     const [updated] = await getDb()
       .update(groupMatches)
@@ -111,8 +108,8 @@ export async function POST(req: NextRequest) {
       .where(eq(groupMatches.id, matchId))
       .returning();
 
-    if (scorersList?.length) {
-      for (const name of scorersList) {
+    if (myScorers?.length) {
+      for (const name of myScorers) {
         await getDb().insert(scorers).values({
           groupMatchId: matchId,
           teamId: confirmedById,
