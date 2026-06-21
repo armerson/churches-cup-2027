@@ -3,11 +3,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTournament, getPitchClass } from "@/lib/use-tournament";
 
-type Tab = "fixtures" | "standings" | "knockout" | "boot" | "info";
+type Tab = "live" | "fixtures" | "standings" | "knockout" | "boot" | "info";
 
 export function PlayerView({ onBack }: { onBack: () => void }) {
   const { config } = useTournament();
-  const [tab, setTab] = useState<Tab>("standings");
+  const [tab, setTab] = useState<Tab>("live");
   const [matches, setMatches] = useState<any[]>([]);
   const [koMatches, setKoMatches] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
@@ -35,6 +35,7 @@ export function PlayerView({ onBack }: { onBack: () => void }) {
   const koComps = config?.koCompetitions || [];
 
   const tabs: { id: Tab; label: string }[] = [
+    { id: "live", label: "Live" },
     { id: "fixtures", label: "Fixtures" },
     { id: "standings", label: "Standings" },
     { id: "knockout", label: "Knockout" },
@@ -72,12 +73,91 @@ export function PlayerView({ onBack }: { onBack: () => void }) {
       </nav>
 
       <main className="flex-1 p-4">
+        {tab === "live" && <LiveView matches={matches} koMatches={koMatches} pitchColors={pitchColors} gameDuration={config?.gameDurationMins || 12} />}
         {tab === "fixtures" && <AllFixtures matches={matches} groups={groups} pitchColors={pitchColors} />}
         {tab === "standings" && <Standings matches={matches} groups={groups} koComps={koComps} />}
         {tab === "knockout" && <Knockout matches={koMatches} koComps={koComps} pitchColors={pitchColors} />}
         {tab === "boot" && <GoldenBoot data={goldenBoot} />}
         {tab === "info" && <Info config={config} />}
       </main>
+    </div>
+  );
+}
+
+function LiveView({ matches, koMatches, pitchColors, gameDuration }: { matches: any[]; koMatches: any[]; pitchColors: Record<string, string>; gameDuration: number }) {
+  const now = new Date();
+  const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+
+  function addMins(time: string, mins: number) {
+    const [h, m] = time.split(":").map(Number);
+    const total = h * 60 + m + mins;
+    return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+  }
+
+  const allGames = [
+    ...matches.map((m: any) => ({ type: "group" as const, label: `Group ${m.group}`, team1: m.team1, team2: m.team2, kickoff: m.kickoff, pitch: m.pitch, score1: m.score1, score2: m.score2, status: m.status })),
+    ...koMatches.map((m: any) => ({ type: "ko" as const, label: `${m.competition} · ${m.round}`, team1: m.team1Name, team2: m.team2Name, kickoff: m.kickoff, pitch: m.pitch, score1: m.score1, score2: m.score2, status: m.winnerId ? "confirmed" : m.status })),
+  ].filter((g) => g.kickoff);
+
+  const playing = allGames.filter((g) => g.kickoff && g.kickoff <= currentTime && addMins(g.kickoff, gameDuration) > currentTime && g.status !== "confirmed");
+  const upcoming = allGames.filter((g) => g.kickoff && g.kickoff > currentTime).sort((a, b) => a.kickoff!.localeCompare(b.kickoff!));
+  const nextKickoff = upcoming[0]?.kickoff;
+  const nextUp = upcoming.filter((g) => g.kickoff === nextKickoff);
+  const recent = allGames.filter((g) => g.status === "confirmed").sort((a, b) => (b.kickoff || "").localeCompare(a.kickoff || "")).slice(0, 6);
+
+  function MatchCard({ g }: { g: typeof allGames[0] }) {
+    return (
+      <div className="bg-white rounded-lg px-3 py-2.5 shadow-sm border flex justify-between items-center">
+        <div>
+          <p className="font-semibold text-sm">{g.team1} <span className="text-gray-400">vs</span> {g.team2}</p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-[10px] text-gray-500 uppercase font-medium">{g.label}</span>
+            {g.kickoff && <span className="text-[10px] text-gray-500">{g.kickoff}</span>}
+            {g.pitch && <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getPitchClass(pitchColors, g.pitch)}`}>{g.pitch}</span>}
+          </div>
+        </div>
+        {g.score1 !== null && <span className="text-lg font-bold">{g.score1}–{g.score2}</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-lg font-bold">Match Day</h2>
+
+      {playing.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+            <h3 className="text-xs font-bold text-red-600 uppercase tracking-wider">Playing Now</h3>
+          </div>
+          <div className="space-y-1.5">
+            {playing.map((g, i) => <MatchCard key={i} g={g} />)}
+          </div>
+        </div>
+      )}
+
+      {nextUp.length > 0 && (
+        <div>
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Up Next — {nextKickoff}</h3>
+          <div className="space-y-1.5">
+            {nextUp.map((g, i) => <MatchCard key={i} g={g} />)}
+          </div>
+        </div>
+      )}
+
+      {playing.length === 0 && nextUp.length === 0 && (
+        <p className="text-gray-500 text-sm">No games scheduled right now.</p>
+      )}
+
+      {recent.length > 0 && (
+        <div>
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Recent Results</h3>
+          <div className="space-y-1.5">
+            {recent.map((g, i) => <MatchCard key={i} g={g} />)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -148,4 +148,18 @@ async function advanceWinner(matchId: string, winnerId: number) {
 
   const updateField = slot === 1 ? { team1Id: winnerId } : { team2Id: winnerId };
   await getDb().update(koMatches).set({ ...updateField, updatedAt: new Date() }).where(eq(koMatches.matchId, target.matchId));
+
+  // Advance loser to 3rd place match if semi-final
+  if (current.round === "sf") {
+    const thirdPlace = compMatches.find((m) => m.round === "3rd");
+    if (thirdPlace) {
+      const match = allMatches.find((m) => m.matchId === matchId)!;
+      const loserId = match.team1Id === winnerId ? match.team2Id : match.team1Id;
+      if (loserId) {
+        const loserSlot: 1 | 2 = current.matchNum === 1 ? 1 : 2;
+        const loserField = loserSlot === 1 ? { team1Id: loserId } : { team2Id: loserId };
+        await getDb().update(koMatches).set({ ...loserField, updatedAt: new Date() }).where(eq(koMatches.matchId, thirdPlace.matchId));
+      }
+    }
+  }
 }

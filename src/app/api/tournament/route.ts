@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db as getDb } from "@/lib/db";
 import { tournament, teams, groupMatches, koMatches, scorers, rosters } from "@/lib/schema";
 import { eq, sql } from "drizzle-orm";
+import { hashPin } from "@/lib/hash";
 
 export async function GET() {
   let [config] = await getDb().select().from(tournament);
@@ -114,6 +115,8 @@ export async function POST(req: NextRequest) {
     if (groupStageGapMins !== undefined) updates.groupStageGapMins = groupStageGapMins;
     if (groupStageStartTime !== undefined) updates.groupStageStartTime = groupStageStartTime;
     if (koCompetitions !== undefined) updates.koCompetitions = koCompetitions;
+    if (body.adminPin !== undefined) updates.adminPin = await hashPin(body.adminPin);
+    if (body.thirdPlacePlayoff !== undefined) updates.thirdPlacePlayoff = body.thirdPlacePlayoff;
 
     let [config] = await getDb().select().from(tournament);
     if (!config) {
@@ -125,7 +128,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === "setup") {
-    const { groups: groupsInput, name, year, pitches: pitchesInput, gameDurationMins, maxSquadSize, groupStageGapMins, groupStageStartTime, koCompetitions } = body;
+    const { groups: groupsInput, name, year, pitches: pitchesInput, gameDurationMins, maxSquadSize, groupStageGapMins, groupStageStartTime, koCompetitions, adminPin, thirdPlacePlayoff } = body;
 
     if (!groupsInput || typeof groupsInput !== "object" || Object.keys(groupsInput).length === 0) {
       return NextResponse.json({ error: "Groups with teams are required" }, { status: 400 });
@@ -145,14 +148,15 @@ export async function POST(req: NextRequest) {
     await db.delete(koMatches);
     await db.delete(teams);
 
-    // Create teams
+    // Create teams with hashed PINs
     const teamIds: Record<string, number> = {};
     let pinIdx = 0;
     for (const [group, teamNames] of Object.entries(groupsInput as Record<string, string[]>)) {
       for (const teamName of teamNames) {
         pinIdx++;
-        const pin = String(pinIdx).padStart(4, "0");
-        const [row] = await db.insert(teams).values({ name: teamName, groupLetter: group, pin }).returning();
+        const plainPin = String(pinIdx).padStart(4, "0");
+        const hashedPin = await hashPin(plainPin);
+        const [row] = await db.insert(teams).values({ name: teamName, groupLetter: group, pin: hashedPin }).returning();
         teamIds[teamName] = row.id;
       }
     }
@@ -203,6 +207,24 @@ export async function POST(req: NextRequest) {
     ];
     const koFixtures = generateKoBracket(koComps, pitchesList, gap, groupStageEndTime, numGroups);
 
+    if (thirdPlacePlayoff) {
+      for (const comp of koComps) {
+        const compFixtures = koFixtures.filter((f) => f.comp === comp.key);
+        const finalMatch = compFixtures.find((f) => f.round === "final");
+        if (finalMatch) {
+          const prefix = comp.key.charAt(0);
+          koFixtures.push({
+            matchId: `${prefix}-3rd`,
+            comp: comp.key,
+            round: "3rd",
+            num: 1,
+            kickoff: finalMatch.kickoff,
+            pitch: pitchesList[pitchesList.indexOf(finalMatch.pitch) + 1] || pitchesList[0],
+          });
+        }
+      }
+    }
+
     for (const m of koFixtures) {
       await db.insert(koMatches).values({
         matchId: m.matchId,
@@ -226,6 +248,8 @@ export async function POST(req: NextRequest) {
       groupStageGapMins: gap,
       groupStageStartTime: startTime,
       koCompetitions: koComps,
+      adminPin: adminPin ? await hashPin(adminPin) : await hashPin("1234"),
+      thirdPlacePlayoff: thirdPlacePlayoff || false,
       setupComplete: true,
       updatedAt: new Date(),
     };

@@ -15,6 +15,8 @@ export const tournament = pgTable("tournament", {
   groupStageGapMins: integer("group_stage_gap_mins").notNull().default(14),
   groupStageStartTime: text("group_stage_start_time").notNull().default("10:00"),
   koCompetitions: jsonb("ko_competitions").notNull().default(sql`'[{"key":"championship","label":"Championship","qualifyPositions":[1,2],"format":"r16"},{"key":"shield","label":"Shield","qualifyPositions":[3],"format":"r1-8"},{"key":"plate","label":"Plate","qualifyPositions":[4],"format":"r1-4"}]'::jsonb`),
+  adminPin: text("admin_pin").notNull().default("1234"),
+  thirdPlacePlayoff: boolean("third_place_playoff").notNull().default(false),
   setupComplete: boolean("setup_complete").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
@@ -24,7 +26,7 @@ export const teams = pgTable("teams", {
   id: serial("id").primaryKey(),
   name: text("name").unique().notNull(),
   groupLetter: char("group_letter", { length: 1 }).notNull(),
-  pin: char("pin", { length: 4 }).notNull().default("0000"),
+  pin: text("pin").notNull().default("0000"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 

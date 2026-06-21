@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTournament, getPitchClass } from "@/lib/use-tournament";
 
-type Tab = "setup" | "scores" | "knockout" | "golden-boot" | "notices";
+type Tab = "setup" | "schedule" | "teams" | "scores" | "knockout" | "golden-boot" | "notices" | "export";
 
 type Match = {
   id: number;
@@ -64,10 +64,13 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "setup", label: "Setup" },
+    { id: "schedule", label: "Schedule" },
+    { id: "teams", label: "Teams" },
     { id: "scores", label: "Scores" },
     { id: "knockout", label: "Knockout" },
     { id: "golden-boot", label: "Boot" },
     { id: "notices", label: "Notices" },
+    { id: "export", label: "Export" },
   ];
 
   return (
@@ -100,9 +103,12 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
 
       <main className="flex-1 p-4">
         {tab === "setup" && <AdminSetup config={config} />}
+        {tab === "schedule" && <AdminSchedule matches={matches} koMatches={koMatches} onRefresh={fetchData} pitchColors={config?.pitchColors || {}} pitches={config?.pitches as string[] || []} />}
+        {tab === "teams" && <AdminTeams />}
         {tab === "scores" && <AdminScores matches={matches} onRefresh={fetchData} pitchColors={config?.pitchColors || {}} />}
         {tab === "knockout" && <AdminKnockout matches={koMatches} onRefresh={fetchData} pitchColors={config?.pitchColors || {}} koComps={config?.koCompetitions || []} />}
         {tab === "golden-boot" && <AdminGoldenBoot data={goldenBoot} />}
+        {tab === "export" && <AdminExport />}
         {tab === "notices" && <AdminNotices notices={notices} onRefresh={fetchData} />}
       </main>
     </div>
@@ -130,6 +136,8 @@ function AdminSetup({ config }: { config: any }) {
   const [startTime, setStartTime] = useState(config?.groupStageStartTime || "10:00");
   const [numGroups, setNumGroups] = useState(String(config?.totalGroups || 8));
   const [teamsPerGroup, setTeamsPerGroup] = useState(String(config?.teamsPerGroup || 4));
+  const [adminPin, setAdminPin] = useState("");
+  const [thirdPlace, setThirdPlace] = useState(config?.thirdPlacePlayoff || false);
   const [selectedPitches, setSelectedPitches] = useState<string[]>((config?.pitches as string[]) || ["orange", "blue", "yellow", "red"]);
   const [groups, setGroups] = useState<Record<string, string[]>>(() => {
     if (config?.groups && Object.keys(config.groups).length > 0) return config.groups;
@@ -206,6 +214,8 @@ function AdminSetup({ config }: { config: any }) {
           ...(Number(teamsPerGroup) >= 3 ? [{ key: "shield", label: "Shield", qualifyPositions: [3], format: "r1" }] : []),
           ...(Number(teamsPerGroup) >= 4 ? [{ key: "plate", label: "Plate", qualifyPositions: [4], format: "r1" }] : []),
         ],
+        adminPin: adminPin.trim() || undefined,
+        thirdPlacePlayoff: thirdPlace,
       }),
     });
     const data = await res.json();
@@ -291,6 +301,16 @@ function AdminSetup({ config }: { config: any }) {
                 className="w-full border rounded-lg px-3 py-2.5 text-sm" />
             </div>
           </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Admin PIN (leave blank to keep default 1234)</label>
+            <input type="text" value={adminPin} onChange={(e) => setAdminPin(e.target.value)}
+              placeholder="1234" className="w-full border rounded-lg px-3 py-2.5 text-sm" />
+          </div>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" checked={thirdPlace} onChange={(e) => setThirdPlace(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-[#274296] focus:ring-[#274296]" />
+            <span className="text-sm font-medium text-gray-700">3rd/4th Place Playoff in KO</span>
+          </label>
           <button onClick={() => { rebuildGroups(); setStep(1); }}
             className="w-full bg-[#274296] text-white font-semibold py-2.5 rounded-lg text-sm">
             Next: Pitches
@@ -382,6 +402,198 @@ function AdminSetup({ config }: { config: any }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function AdminTeams() {
+  const [teamList, setTeamList] = useState<any[]>([]);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [newName, setNewName] = useState("");
+  const [newGroup, setNewGroup] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [pinResult, setPinResult] = useState<string | null>(null);
+
+  const fetchTeams = useCallback(async () => {
+    const res = await fetch("/api/admin/teams");
+    if (res.ok) setTeamList(await res.json());
+  }, []);
+
+  useEffect(() => { fetchTeams(); }, [fetchTeams]);
+
+  const groups = [...new Set(teamList.map((t) => t.groupLetter))].sort();
+
+  async function rename(teamId: number) {
+    if (!newName.trim()) return;
+    setBusy(true);
+    await fetch("/api/admin/teams", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "rename", teamId, name: newName.trim() }),
+    });
+    setEditing(null);
+    setBusy(false);
+    fetchTeams();
+  }
+
+  async function move(teamId: number) {
+    setBusy(true);
+    await fetch("/api/admin/teams", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "move", teamId, groupLetter: newGroup }),
+    });
+    setEditing(null);
+    setBusy(false);
+    fetchTeams();
+  }
+
+  async function resetPin(teamId: number) {
+    const pin = prompt("New 4-digit PIN for this team:", "0000");
+    if (!pin) return;
+    const res = await fetch("/api/admin/teams", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "resetPin", teamId, pin }),
+    });
+    const data = await res.json();
+    if (data.success) setPinResult(`PIN reset to: ${data.pin}`);
+    setTimeout(() => setPinResult(null), 3000);
+  }
+
+  return (
+    <div className="space-y-3">
+      <h2 className="text-lg font-bold">Team Management</h2>
+      {pinResult && <div className="bg-green-50 text-green-700 text-sm font-medium rounded-lg px-3 py-2">{pinResult}</div>}
+      {groups.map((g) => (
+        <div key={g}>
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Group {g}</h3>
+          {teamList.filter((t) => t.groupLetter === g).map((t) => (
+            <div key={t.id} className="bg-white rounded-lg p-3 shadow-sm border mb-1.5">
+              <div className="flex justify-between items-center">
+                <p className="font-semibold text-sm">{t.name}</p>
+                <div className="flex gap-2">
+                  <button onClick={() => { setEditing(t.id); setNewName(t.name); setNewGroup(t.groupLetter); }}
+                    className="text-[11px] text-[#274296] font-semibold hover:underline">Edit</button>
+                  <button onClick={() => resetPin(t.id)}
+                    className="text-[11px] text-amber-600 font-semibold hover:underline">Reset PIN</button>
+                </div>
+              </div>
+              {editing === t.id && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
+                      className="flex-1 border rounded px-2 py-1.5 text-sm" placeholder="Team name" />
+                    <button onClick={() => rename(t.id)} disabled={busy}
+                      className="bg-green-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50">Rename</button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select value={newGroup} onChange={(e) => setNewGroup(e.target.value)}
+                      className="border rounded px-2 py-1.5 text-sm">
+                      {groups.map((gr) => <option key={gr} value={gr}>Group {gr}</option>)}
+                    </select>
+                    <button onClick={() => move(t.id)} disabled={busy || newGroup === t.groupLetter}
+                      className="bg-amber-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50">Move</button>
+                  </div>
+                  <button onClick={() => setEditing(null)} className="text-gray-400 text-xs">Cancel</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminSchedule({ matches, koMatches: koMatchList, onRefresh, pitchColors, pitches }: { matches: Match[]; koMatches: KoMatch[]; onRefresh: () => void; pitchColors: Record<string, string>; pitches: string[] }) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [kickoff, setKickoff] = useState("");
+  const [pitch, setPitch] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<"group" | "ko">("group");
+
+  async function save(matchId: string | number, isKo: boolean) {
+    setBusy(true);
+    await fetch("/api/admin/schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "update", matchId, kickoff, pitch, isKo }),
+    });
+    setEditing(null);
+    setBusy(false);
+    onRefresh();
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold">Schedule</h2>
+        <div className="flex gap-1">
+          <button onClick={() => setView("group")}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${view === "group" ? "bg-[#274296] text-white" : "bg-gray-100 text-gray-600"}`}>Group</button>
+          <button onClick={() => setView("ko")}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${view === "ko" ? "bg-[#274296] text-white" : "bg-gray-100 text-gray-600"}`}>Knockout</button>
+        </div>
+      </div>
+
+      {view === "group" && matches.map((m) => (
+        <div key={m.id} className="bg-white rounded-lg p-3 shadow-sm border">
+          <div className="flex justify-between items-center">
+            <div>
+              <p className="font-semibold text-sm">{m.team1} vs {m.team2}</p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-[10px] text-gray-500 uppercase font-medium">Group {m.group}</span>
+                {m.kickoff && <span className="text-[10px] text-gray-500">{m.kickoff}</span>}
+                {m.pitch && <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getPitchClass(pitchColors, m.pitch)}`}>{m.pitch}</span>}
+              </div>
+            </div>
+            <button onClick={() => { setEditing(`g-${m.id}`); setKickoff(m.kickoff || ""); setPitch(m.pitch || ""); }}
+              className="text-[11px] text-[#274296] font-semibold hover:underline">Edit</button>
+          </div>
+          {editing === `g-${m.id}` && (
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <input type="time" value={kickoff} onChange={(e) => setKickoff(e.target.value)}
+                className="border rounded px-2 py-1.5 text-sm" />
+              <select value={pitch} onChange={(e) => setPitch(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
+                {pitches.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <button onClick={() => save(m.id, false)} disabled={busy}
+                className="bg-green-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50">Save</button>
+              <button onClick={() => setEditing(null)} className="text-gray-400 text-xs">Cancel</button>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {view === "ko" && koMatchList.map((m) => (
+        <div key={m.matchId} className="bg-white rounded-lg p-3 shadow-sm border">
+          <div className="flex justify-between items-center">
+            <div>
+              <p className="font-semibold text-sm">{m.team1Name} vs {m.team2Name}</p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-[10px] text-gray-500 uppercase font-medium">{m.competition} · {m.round}</span>
+                {m.kickoff && <span className="text-[10px] text-gray-500">{m.kickoff}</span>}
+                {m.pitch && <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getPitchClass(pitchColors, m.pitch)}`}>{m.pitch}</span>}
+              </div>
+            </div>
+            <button onClick={() => { setEditing(`k-${m.matchId}`); setKickoff(m.kickoff || ""); setPitch(m.pitch || ""); }}
+              className="text-[11px] text-[#274296] font-semibold hover:underline">Edit</button>
+          </div>
+          {editing === `k-${m.matchId}` && (
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <input type="time" value={kickoff} onChange={(e) => setKickoff(e.target.value)}
+                className="border rounded px-2 py-1.5 text-sm" />
+              <select value={pitch} onChange={(e) => setPitch(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
+                {pitches.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <button onClick={() => save(m.matchId, true)} disabled={busy}
+                className="bg-green-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50">Save</button>
+              <button onClick={() => setEditing(null)} className="text-gray-400 text-xs">Cancel</button>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -747,6 +959,28 @@ function AdminNotices({ notices, onRefresh }: { notices: any[]; onRefresh: () =>
             <button onClick={() => handleDelete(n.id)} className="text-red-400 hover:text-red-600 text-xs ml-2">Delete</button>
           </div>
         </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminExport() {
+  const exports = [
+    { type: "results", label: "Group Results", desc: "All group stage match results" },
+    { type: "standings", label: "Standings", desc: "Current group standings table" },
+    { type: "golden-boot", label: "Golden Boot", desc: "Top scorers list" },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <h2 className="text-lg font-bold">Export Data</h2>
+      {exports.map((e) => (
+        <a key={e.type} href={`/api/export?type=${e.type}`} download
+          className="block bg-white rounded-lg p-4 shadow-sm border hover:bg-gray-50 transition-colors">
+          <p className="font-semibold text-sm">{e.label}</p>
+          <p className="text-xs text-gray-500 mt-0.5">{e.desc}</p>
+          <p className="text-xs text-[#274296] font-semibold mt-1">Download CSV</p>
+        </a>
       ))}
     </div>
   );
