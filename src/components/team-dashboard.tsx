@@ -177,18 +177,45 @@ function FixturesTab({ matches, teamName }: { matches: Match[]; teamName: string
   );
 }
 
+function ScorerInputs({ count, scorers, onChange, label }: { count: number; scorers: string[]; onChange: (s: string[]) => void; label: string }) {
+  if (count <= 0) return null;
+  return (
+    <div className="space-y-2">
+      <label className="block text-xs font-semibold text-gray-600">{label} ({count} goal{count !== 1 ? "s" : ""})</label>
+      {Array.from({ length: count }).map((_, i) => (
+        <input
+          key={i}
+          type="text"
+          value={scorers[i] || ""}
+          onChange={(e) => { const next = [...scorers]; next[i] = e.target.value; onChange(next); }}
+          placeholder={`Goal ${i + 1} scorer`}
+          className="w-full border rounded-lg px-3 py-2 text-sm"
+          required
+        />
+      ))}
+    </div>
+  );
+}
+
 function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; session: Session; onSubmitted: () => void }) {
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [score1, setScore1] = useState("");
   const [score2, setScore2] = useState("");
+  const [myScorers, setMyScorers] = useState<string[]>([]);
+  const [oppScorers, setOppScorers] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
 
   const available = matches.filter((m) => m.status === "upcoming");
 
+  const myGoals = Number(score1) || 0;
+  const oppGoals = Number(score2) || 0;
+  const myScorersValid = myGoals === 0 || (myScorers.slice(0, myGoals).every((s) => s.trim().length > 0));
+  const oppScorersValid = oppGoals === 0 || (oppScorers.slice(0, oppGoals).every((s) => s.trim().length > 0));
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedMatch) return;
+    if (!selectedMatch || !myScorersValid || !oppScorersValid) return;
     setSubmitting(true);
     setMsg("");
     const isTeam1 = selectedMatch.team1 === session.teamName;
@@ -198,9 +225,11 @@ function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; sessio
       body: JSON.stringify({
         action: "submit",
         matchId: selectedMatch.id,
-        score1: isTeam1 ? Number(score1) : Number(score2),
-        score2: isTeam1 ? Number(score2) : Number(score1),
+        score1: isTeam1 ? myGoals : oppGoals,
+        score2: isTeam1 ? oppGoals : myGoals,
         submittedById: session.teamId,
+        myScorers: myScorers.slice(0, myGoals).map((s) => s.trim()),
+        oppScorers: oppScorers.slice(0, oppGoals).map((s) => s.trim()),
       }),
     });
     const data = await res.json();
@@ -212,6 +241,8 @@ function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; sessio
       setSelectedMatch(null);
       setScore1("");
       setScore2("");
+      setMyScorers([]);
+      setOppScorers([]);
       onSubmitted();
     }
   }
@@ -226,7 +257,7 @@ function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; sessio
           {available.map((m) => {
             const opp = m.team1 === session.teamName ? m.team2 : m.team1;
             return (
-              <button key={m.id} onClick={() => { setSelectedMatch(m); setMsg(""); }}
+              <button key={m.id} onClick={() => { setSelectedMatch(m); setMsg(""); setMyScorers([]); setOppScorers([]); }}
                 className={`w-full text-left bg-white rounded-lg p-4 shadow-sm border transition-colors ${
                   selectedMatch?.id === m.id ? "border-[#274296] ring-2 ring-blue-200" : ""
                 }`}>
@@ -245,16 +276,19 @@ function SubmitTab({ matches, session, onSubmitted }: { matches: Match[]; sessio
           <div className="flex gap-4">
             <div className="flex-1">
               <label className="block text-xs font-semibold text-gray-600 mb-1">Your Score</label>
-              <input type="number" min="0" max="99" value={score1} onChange={(e) => setScore1(e.target.value)}
+              <input type="number" min="0" max="99" value={score1} onChange={(e) => { setScore1(e.target.value); setMyScorers([]); }}
                 className="w-full border rounded-lg px-3 py-3 text-center text-2xl font-bold" required />
             </div>
             <div className="flex-1">
               <label className="block text-xs font-semibold text-gray-600 mb-1">Opponent</label>
-              <input type="number" min="0" max="99" value={score2} onChange={(e) => setScore2(e.target.value)}
+              <input type="number" min="0" max="99" value={score2} onChange={(e) => { setScore2(e.target.value); setOppScorers([]); }}
                 className="w-full border rounded-lg px-3 py-3 text-center text-2xl font-bold" required />
             </div>
           </div>
-          <button type="submit" disabled={submitting}
+          <ScorerInputs count={myGoals} scorers={myScorers} onChange={setMyScorers} label={`${session.teamName} scorers`} />
+          <ScorerInputs count={oppGoals} scorers={oppScorers} onChange={setOppScorers}
+            label={`${selectedMatch.team1 === session.teamName ? selectedMatch.team2 : selectedMatch.team1} scorers`} />
+          <button type="submit" disabled={submitting || !myScorersValid || !oppScorersValid}
             className="w-full bg-green-600 text-white font-semibold py-3 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors">
             {submitting ? "Submitting..." : "Submit Score"}
           </button>

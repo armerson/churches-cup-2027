@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   const { action } = body;
 
   if (action === "submit") {
-    const { matchId, score1, score2, submittedById, scorersList } = body;
+    const { matchId, score1, score2, submittedById, myScorers, oppScorers } = body;
 
     const [match] = await getDb()
       .select()
@@ -49,6 +49,18 @@ export async function POST(req: NextRequest) {
     if (match.status !== "upcoming") return NextResponse.json({ error: "Score already submitted" }, { status: 400 });
     if (match.team1Id !== submittedById && match.team2Id !== submittedById) {
       return NextResponse.json({ error: "Not authorised for this match" }, { status: 403 });
+    }
+
+    const isTeam1 = match.team1Id === submittedById;
+    const myGoals = isTeam1 ? score1 : score2;
+    const oppGoals = isTeam1 ? score2 : score1;
+    const oppTeamId = isTeam1 ? match.team2Id : match.team1Id;
+
+    if (myGoals > 0 && (!myScorers || myScorers.length !== myGoals)) {
+      return NextResponse.json({ error: `Enter all ${myGoals} scorer(s) for your team` }, { status: 400 });
+    }
+    if (oppGoals > 0 && (!oppScorers || oppScorers.length !== oppGoals)) {
+      return NextResponse.json({ error: `Enter all ${oppGoals} scorer(s) for opponent` }, { status: 400 });
     }
 
     const [updated] = await getDb()
@@ -63,13 +75,14 @@ export async function POST(req: NextRequest) {
       .where(eq(groupMatches.id, matchId))
       .returning();
 
-    if (scorersList?.length) {
-      for (const name of scorersList) {
-        await getDb().insert(scorers).values({
-          groupMatchId: matchId,
-          teamId: submittedById,
-          playerName: name,
-        });
+    if (myScorers?.length) {
+      for (const name of myScorers) {
+        await getDb().insert(scorers).values({ groupMatchId: matchId, teamId: submittedById, playerName: name });
+      }
+    }
+    if (oppScorers?.length) {
+      for (const name of oppScorers) {
+        await getDb().insert(scorers).values({ groupMatchId: matchId, teamId: oppTeamId, playerName: name });
       }
     }
 
