@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useTournament, getPitchClass } from "@/lib/use-tournament";
 
 type Tab = "scores" | "knockout" | "golden-boot" | "notices";
 
@@ -37,14 +38,8 @@ type KoMatch = {
   pitch: string | null;
 };
 
-const PITCH_COLORS: Record<string, string> = {
-  orange: "bg-orange-500 text-white",
-  blue: "bg-[#274296] text-white",
-  yellow: "bg-yellow-400 text-gray-900",
-  red: "bg-red-600 text-white",
-};
-
 export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
+  const { config } = useTournament();
   const [tab, setTab] = useState<Tab>("scores");
   const [matches, setMatches] = useState<Match[]>([]);
   const [koMatches, setKoMatches] = useState<KoMatch[]>([]);
@@ -79,7 +74,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       <header className="bg-[#274296] text-white px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-bold">Churches Cup 2027</h1>
+            <h1 className="text-lg font-bold">{config?.name || "Churches Cup"}</h1>
             <p className="text-blue-200 text-xs">Organiser Dashboard</p>
           </div>
           <button onClick={onLogout} className="text-blue-200 text-xs hover:text-white">Logout</button>
@@ -103,8 +98,8 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       </nav>
 
       <main className="flex-1 p-4">
-        {tab === "scores" && <AdminScores matches={matches} onRefresh={fetchData} />}
-        {tab === "knockout" && <AdminKnockout matches={koMatches} onRefresh={fetchData} />}
+        {tab === "scores" && <AdminScores matches={matches} onRefresh={fetchData} pitchColors={config?.pitchColors || {}} />}
+        {tab === "knockout" && <AdminKnockout matches={koMatches} onRefresh={fetchData} pitchColors={config?.pitchColors || {}} koComps={config?.koCompetitions || []} />}
         {tab === "golden-boot" && <AdminGoldenBoot data={goldenBoot} />}
         {tab === "notices" && <AdminNotices notices={notices} onRefresh={fetchData} />}
       </main>
@@ -112,7 +107,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   );
 }
 
-function AdminScores({ matches, onRefresh }: { matches: Match[]; onRefresh: () => void }) {
+function AdminScores({ matches, onRefresh, pitchColors }: { matches: Match[]; onRefresh: () => void; pitchColors: Record<string, string> }) {
   const [editing, setEditing] = useState<number | null>(null);
   const [s1, setS1] = useState("");
   const [s2, setS2] = useState("");
@@ -169,7 +164,7 @@ function AdminScores({ matches, onRefresh }: { matches: Match[]; onRefresh: () =
                 <span className="text-[10px] text-gray-500 uppercase font-medium">Group {m.group}</span>
                 {m.kickoff && <span className="text-[10px] text-gray-500">{m.kickoff}</span>}
                 {m.pitch && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PITCH_COLORS[m.pitch] || "bg-gray-200"}`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getPitchClass(pitchColors, m.pitch)}`}>
                     {m.pitch}
                   </span>
                 )}
@@ -218,7 +213,7 @@ function AdminScores({ matches, onRefresh }: { matches: Match[]; onRefresh: () =
   );
 }
 
-function AdminKnockout({ matches, onRefresh }: { matches: KoMatch[]; onRefresh: () => void }) {
+function AdminKnockout({ matches, onRefresh, pitchColors, koComps }: { matches: KoMatch[]; onRefresh: () => void; pitchColors: Record<string, string>; koComps: any[] }) {
   const [seeding, setSeeding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [s1, setS1] = useState("");
@@ -276,8 +271,8 @@ function AdminKnockout({ matches, onRefresh }: { matches: KoMatch[]; onRefresh: 
     onRefresh();
   }
 
-  const comps = ["championship", "shield", "plate"];
-  const compLabels: Record<string, string> = { championship: "Championship", shield: "Shield", plate: "Plate" };
+  const comps = koComps.map((c) => c.key);
+  const compLabels = Object.fromEntries(koComps.map((c) => [c.key, c.label]));
   const roundLabels: Record<string, string> = { r16: "Round of 16", r1: "Round 1", qf: "Quarter-Final", sf: "Semi-Final", final: "Final" };
 
   return (
@@ -309,7 +304,7 @@ function AdminKnockout({ matches, onRefresh }: { matches: KoMatch[]; onRefresh: 
                           <div className="flex items-center gap-2 mt-0.5">
                             {m.kickoff && <span className="text-[10px] text-gray-500">{m.kickoff}</span>}
                             {m.pitch && (
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PITCH_COLORS[m.pitch] || "bg-gray-200"}`}>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getPitchClass(pitchColors, m.pitch)}`}>
                                 {m.pitch}
                               </span>
                             )}

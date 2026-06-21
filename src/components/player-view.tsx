@@ -1,28 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useTournament, getPitchClass } from "@/lib/use-tournament";
 
 type Tab = "fixtures" | "standings" | "knockout" | "boot" | "info";
 
-const GROUPS: Record<string, string[]> = {
-  A: ["Covenant", "Mourne", "Spain Madrid", "Waringstown Presbyterian Church"],
-  B: ["Bethany FC", "Ballymagerney FPC", "YAKAAR ACADEMY", "Sloan Street Presbyterian"],
-  C: ["Grace Community Church Richhill", "Portabello Baptist", "NTPC", "Portadown Elim"],
-  D: ["Eagles", "Acpc fc", "Lurgan Elim", "Ulster wonders fc"],
-  E: ["Craigavon PC", "Newmills", "Bleary FC", "Benburb Ballers"],
-  F: ["Killicomaine Baptist church", "CGR FC", "CFPC Originals", "Gortmerron Goats"],
-  G: ["Ancora Church Football", "Legacurry Presbyterian", "Emmanuel Baptist", "Downshire Church"],
-  H: ["Derry/Edenderry", "The Blues", "Ardtrea Aardvarks", "Team Black"],
-};
-
-const PITCH_COLORS: Record<string, string> = {
-  orange: "bg-orange-500 text-white",
-  blue: "bg-[#274296] text-white",
-  yellow: "bg-yellow-400 text-gray-900",
-  red: "bg-red-600 text-white",
-};
-
 export function PlayerView({ onBack }: { onBack: () => void }) {
+  const { config } = useTournament();
   const [tab, setTab] = useState<Tab>("standings");
   const [matches, setMatches] = useState<any[]>([]);
   const [koMatches, setKoMatches] = useState<any[]>([]);
@@ -45,6 +29,11 @@ export function PlayerView({ onBack }: { onBack: () => void }) {
     return () => clearInterval(interval);
   }, [fetchData]);
 
+  const groups = config?.groups || {};
+  const pitchColors = config?.pitchColors || {};
+  const tournamentName = config?.name || "Churches Cup";
+  const koComps = config?.koCompetitions || [];
+
   const tabs: { id: Tab; label: string }[] = [
     { id: "fixtures", label: "Fixtures" },
     { id: "standings", label: "Standings" },
@@ -58,7 +47,7 @@ export function PlayerView({ onBack }: { onBack: () => void }) {
       <header className="bg-[#274296] text-white px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-bold">Churches Cup 2027</h1>
+            <h1 className="text-lg font-bold">{tournamentName}</h1>
             <p className="text-blue-200 text-xs">Player View</p>
           </div>
           <button onClick={onBack} className="text-blue-200 text-xs hover:text-white">Back</button>
@@ -83,19 +72,19 @@ export function PlayerView({ onBack }: { onBack: () => void }) {
       </nav>
 
       <main className="flex-1 p-4">
-        {tab === "fixtures" && <AllFixtures matches={matches} />}
-        {tab === "standings" && <Standings matches={matches} />}
-        {tab === "knockout" && <Knockout matches={koMatches} />}
+        {tab === "fixtures" && <AllFixtures matches={matches} groups={groups} pitchColors={pitchColors} />}
+        {tab === "standings" && <Standings matches={matches} groups={groups} koComps={koComps} />}
+        {tab === "knockout" && <Knockout matches={koMatches} koComps={koComps} pitchColors={pitchColors} />}
         {tab === "boot" && <GoldenBoot data={goldenBoot} />}
-        {tab === "info" && <Info />}
+        {tab === "info" && <Info config={config} />}
       </main>
     </div>
   );
 }
 
-function AllFixtures({ matches }: { matches: any[] }) {
+function AllFixtures({ matches, groups, pitchColors }: { matches: any[]; groups: Record<string, string[]>; pitchColors: Record<string, string> }) {
   const [filterGroup, setFilterGroup] = useState<string>("all");
-  const groups = Object.keys(GROUPS);
+  const groupKeys = Object.keys(groups).sort();
   const filtered = filterGroup === "all" ? matches : matches.filter((m: any) => m.group === filterGroup);
 
   return (
@@ -105,10 +94,10 @@ function AllFixtures({ matches }: { matches: any[] }) {
         <select value={filterGroup} onChange={(e) => setFilterGroup(e.target.value)}
           className="border rounded-lg px-2 py-1.5 text-xs">
           <option value="all">All Groups</option>
-          {groups.map((g) => <option key={g} value={g}>Group {g}</option>)}
+          {groupKeys.map((g) => <option key={g} value={g}>Group {g}</option>)}
         </select>
       </div>
-      {(filterGroup === "all" ? groups : [filterGroup]).map((group) => {
+      {(filterGroup === "all" ? groupKeys : [filterGroup]).map((group) => {
         const groupMatches = filtered.filter((m: any) => m.group === group);
         if (groupMatches.length === 0) return null;
         return (
@@ -122,7 +111,7 @@ function AllFixtures({ matches }: { matches: any[] }) {
                     <div className="flex items-center gap-2 mt-0.5">
                       {m.kickoff && <span className="text-xs text-gray-500">{m.kickoff}</span>}
                       {m.pitch && (
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PITCH_COLORS[m.pitch] || "bg-gray-200"}`}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getPitchClass(pitchColors, m.pitch)}`}>
                           {m.pitch.charAt(0).toUpperCase() + m.pitch.slice(1)}
                         </span>
                       )}
@@ -152,10 +141,10 @@ function AllFixtures({ matches }: { matches: any[] }) {
 
 type Standing = { name: string; p: number; w: number; d: number; l: number; gf: number; ga: number; gd: number; pts: number };
 
-function Standings({ matches }: { matches: any[] }) {
+function Standings({ matches, groups, koComps }: { matches: any[]; groups: Record<string, string[]>; koComps: any[] }) {
   const confirmed = matches.filter((m: any) => m.status === "confirmed");
   const standings: Record<string, Record<string, Standing>> = {};
-  for (const [group, teams] of Object.entries(GROUPS)) {
+  for (const [group, teams] of Object.entries(groups)) {
     standings[group] = {};
     for (const t of teams) {
       standings[group][t] = { name: t, p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, gd: 0, pts: 0 };
@@ -175,6 +164,8 @@ function Standings({ matches }: { matches: any[] }) {
     s1.gd = s1.gf - s1.ga;
     s2.gd = s2.gf - s2.ga;
   }
+
+  const positionColors = ["bg-green-50", "bg-green-50", "bg-blue-50", "bg-orange-50"];
 
   return (
     <div className="space-y-4">
@@ -199,7 +190,7 @@ function Standings({ matches }: { matches: any[] }) {
                 </thead>
                 <tbody>
                   {sorted.map((s, i) => (
-                    <tr key={s.name} className={i < 2 ? "bg-green-50" : i === 2 ? "bg-blue-50" : "bg-orange-50"}>
+                    <tr key={s.name} className={positionColors[i] || ""}>
                       <td className="px-2 py-1.5 font-medium truncate max-w-[140px]">{s.name}</td>
                       <td className="text-center">{s.p}</td>
                       <td className="text-center">{s.w}</td>
@@ -215,18 +206,23 @@ function Standings({ matches }: { matches: any[] }) {
           </div>
         );
       })}
-      <div className="flex items-center gap-3 text-[10px] text-gray-500">
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-green-100 border border-green-200"></span> Championship</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-100 border border-blue-200"></span> Shield</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-orange-100 border border-orange-200"></span> Plate</span>
-      </div>
+      {koComps.length > 0 && (
+        <div className="flex items-center gap-3 text-[10px] text-gray-500 flex-wrap">
+          {koComps.map((c, i) => {
+            const colors = ["bg-green-100 border-green-200", "bg-blue-100 border-blue-200", "bg-orange-100 border-orange-200"];
+            return (
+              <span key={c.key} className="flex items-center gap-1">
+                <span className={`w-3 h-3 rounded border ${colors[i] || "bg-gray-100 border-gray-200"}`}></span> {c.label}
+              </span>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
-function Knockout({ matches }: { matches: any[] }) {
-  const comps = ["championship", "shield", "plate"];
-  const compLabels: Record<string, string> = { championship: "Championship", shield: "Shield", plate: "Plate" };
+function Knockout({ matches, koComps, pitchColors }: { matches: any[]; koComps: any[]; pitchColors: Record<string, string> }) {
   const roundLabels: Record<string, string> = { r16: "Round of 16", r1: "Round 1", qf: "Quarter-Final", sf: "Semi-Final", final: "Final" };
 
   if (matches.length === 0) return (
@@ -236,10 +232,13 @@ function Knockout({ matches }: { matches: any[] }) {
     </div>
   );
 
+  const compKeys = koComps.map((c) => c.key);
+  const compLabels = Object.fromEntries(koComps.map((c) => [c.key, c.label]));
+
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-bold">Knockout</h2>
-      {comps.map((comp) => {
+      {compKeys.map((comp) => {
         const compMatches = matches.filter((m: any) => m.competition === comp);
         if (compMatches.length === 0) return null;
         const rounds = [...new Set(compMatches.map((m: any) => m.round))] as string[];
@@ -255,8 +254,12 @@ function Knockout({ matches }: { matches: any[] }) {
                       <div>
                         <p className="font-semibold text-sm">{m.team1Name} <span className="text-gray-400">vs</span> {m.team2Name}</p>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] text-gray-500 uppercase">{roundLabels[m.round] || m.round}</span>
                           {m.kickoff && <span className="text-[10px] text-gray-500">{m.kickoff}</span>}
+                          {m.pitch && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getPitchClass(pitchColors, m.pitch)}`}>
+                              {m.pitch}
+                            </span>
+                          )}
                         </div>
                       </div>
                       {m.winnerId ? (
@@ -313,7 +316,7 @@ function GoldenBoot({ data }: { data: any[] }) {
   );
 }
 
-function Info() {
+function Info({ config }: { config: any }) {
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-bold">Info</h2>
@@ -321,21 +324,15 @@ function Info() {
         <h3 className="font-bold">Group Stage Rules</h3>
         <ul className="list-disc pl-4 space-y-1 text-gray-700">
           <li>Win = 3 points, Draw = 1 point, Loss = 0 points</li>
-          <li>Games are 12 minutes (no half-time)</li>
-          <li>Top 2 from each group → Championship</li>
-          <li>3rd place → Shield, 4th place → Plate</li>
+          <li>Games are {config?.gameDurationMins || 12} minutes (no half-time)</li>
+          {config?.koCompetitions?.map((c: any) => (
+            <li key={c.key}>{c.qualifyPositions.map((p: number) => p <= 2 ? `${p === 1 ? "1st" : "2nd"}` : `${p}${p === 3 ? "rd" : "th"}`).join(" & ")} place → {c.label}</li>
+          ))}
         </ul>
         <h3 className="font-bold mt-4">Knockout Rules</h3>
         <ul className="list-disc pl-4 space-y-1 text-gray-700">
           <li>If drawn after full time → straight to penalties</li>
           <li>Penalty goals do not count for Golden Boot</li>
-        </ul>
-        <h3 className="font-bold mt-4">Schedule</h3>
-        <ul className="list-disc pl-4 space-y-1 text-gray-700">
-          <li>Groups: 10:00–12:34</li>
-          <li>Championship R16: 13:40 / QF: 14:20 / SF: 14:44 / Final: 15:28</li>
-          <li>Shield R1: 14:04 / QF: 14:32 / SF: 14:56 / Final: 15:28</li>
-          <li>Plate R1: 14:28 / SF: 15:04 / Final: 15:28</li>
         </ul>
       </div>
     </div>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { Session } from "@/app/page";
+import { useTournament, getPitchClass } from "@/lib/use-tournament";
 
 type Tab = "fixtures" | "submit" | "confirm" | "standings" | "knockout" | "roster" | "boot" | "info";
 
@@ -20,30 +21,18 @@ type Match = {
   submittedBy: number | null;
 };
 
-const GROUPS: Record<string, string[]> = {
-  A: ["Covenant", "Mourne", "Spain Madrid", "Waringstown Presbyterian Church"],
-  B: ["Bethany FC", "Ballymagerney FPC", "YAKAAR ACADEMY", "Sloan Street Presbyterian"],
-  C: ["Grace Community Church Richhill", "Portabello Baptist", "NTPC", "Portadown Elim"],
-  D: ["Eagles", "Acpc fc", "Lurgan Elim", "Ulster wonders fc"],
-  E: ["Craigavon PC", "Newmills", "Bleary FC", "Benburb Ballers"],
-  F: ["Killicomaine Baptist church", "CGR FC", "CFPC Originals", "Gortmerron Goats"],
-  G: ["Ancora Church Football", "Legacurry Presbyterian", "Emmanuel Baptist", "Downshire Church"],
-  H: ["Derry/Edenderry", "The Blues", "Ardtrea Aardvarks", "Team Black"],
-};
-
-const PITCH_COLORS: Record<string, string> = {
-  orange: "bg-orange-500 text-white",
-  blue: "bg-[#274296] text-white",
-  yellow: "bg-yellow-400 text-gray-900",
-  red: "bg-red-600 text-white",
-};
-
 export function TeamDashboard({ session, onLogout }: { session: Session; onLogout: () => void }) {
+  const { config } = useTournament();
   const [tab, setTab] = useState<Tab>("fixtures");
   const [matches, setMatches] = useState<Match[]>([]);
   const [koMatches, setKoMatches] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
   const [goldenBoot, setGoldenBoot] = useState<any[]>([]);
+
+  const groups = config?.groups || {};
+  const pitchColors = config?.pitchColors || {};
+  const tournamentName = config?.name || "Churches Cup";
+  const koComps = config?.koCompetitions || [];
 
   const fetchData = useCallback(async () => {
     const [s, k, n, g] = await Promise.all([
@@ -90,7 +79,7 @@ export function TeamDashboard({ session, onLogout }: { session: Session; onLogou
       <header className="bg-[#274296] text-white px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-bold">Churches Cup 2027</h1>
+            <h1 className="text-lg font-bold">{tournamentName}</h1>
             <p className="text-blue-200 text-xs">{session.teamName} — Group {session.group}</p>
           </div>
           <button onClick={onLogout} className="text-blue-200 text-xs hover:text-white">Logout</button>
@@ -125,20 +114,20 @@ export function TeamDashboard({ session, onLogout }: { session: Session; onLogou
       </nav>
 
       <main className="flex-1 p-4 space-y-3">
-        {tab === "fixtures" && <FixturesTab matches={myMatches} teamName={session.teamName!} />}
+        {tab === "fixtures" && <FixturesTab matches={myMatches} teamName={session.teamName!} pitchColors={pitchColors} />}
         {tab === "submit" && <SubmitTab matches={myMatches} session={session} onSubmitted={fetchData} />}
         {tab === "confirm" && <ConfirmTab matches={pendingConfirm} session={session} onConfirmed={fetchData} />}
-        {tab === "standings" && <StandingsTab matches={matches} myGroup={session.group!} />}
-        {tab === "knockout" && <KnockoutTab matches={koMatches} session={session} onRefresh={fetchData} />}
+        {tab === "standings" && <StandingsTab matches={matches} myGroup={session.group!} groups={groups} koComps={koComps} />}
+        {tab === "knockout" && <KnockoutTab matches={koMatches} session={session} onRefresh={fetchData} pitchColors={pitchColors} koComps={koComps} />}
         {tab === "roster" && <RosterTab session={session} />}
         {tab === "boot" && <GoldenBootTab data={goldenBoot} />}
-        {tab === "info" && <InfoTab />}
+        {tab === "info" && <InfoTab config={config} />}
       </main>
     </div>
   );
 }
 
-function FixturesTab({ matches, teamName }: { matches: Match[]; teamName: string }) {
+function FixturesTab({ matches, teamName, pitchColors }: { matches: Match[]; teamName: string; pitchColors: Record<string, string> }) {
   return (
     <div className="space-y-2">
       <h2 className="text-lg font-bold">Your Fixtures</h2>
@@ -156,7 +145,7 @@ function FixturesTab({ matches, teamName }: { matches: Match[]; teamName: string
                 <div className="flex items-center gap-2 mt-1">
                   {m.kickoff && <span className="text-xs text-gray-500">{m.kickoff}</span>}
                   {m.pitch && (
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${PITCH_COLORS[m.pitch] || "bg-gray-200"}`}>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getPitchClass(pitchColors, m.pitch)}`}>
                       {m.pitch.charAt(0).toUpperCase() + m.pitch.slice(1)}
                     </span>
                   )}
@@ -356,10 +345,10 @@ function ConfirmTab({ matches, session, onConfirmed }: { matches: Match[]; sessi
 
 type Standing = { name: string; p: number; w: number; d: number; l: number; gf: number; ga: number; gd: number; pts: number };
 
-function StandingsTab({ matches, myGroup }: { matches: Match[]; myGroup: string }) {
+function StandingsTab({ matches, myGroup, groups, koComps }: { matches: Match[]; myGroup: string; groups: Record<string, string[]>; koComps: any[] }) {
   const confirmed = matches.filter((m) => m.status === "confirmed");
   const standings: Record<string, Record<string, Standing>> = {};
-  for (const [group, teams] of Object.entries(GROUPS)) {
+  for (const [group, teams] of Object.entries(groups)) {
     standings[group] = {};
     for (const t of teams) {
       standings[group][t] = { name: t, p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, gd: 0, pts: 0 };
@@ -380,7 +369,7 @@ function StandingsTab({ matches, myGroup }: { matches: Match[]; myGroup: string 
     s2.gd = s2.gf - s2.ga;
   }
 
-  const groupOrder = [myGroup, ...Object.keys(GROUPS).filter((g) => g !== myGroup)];
+  const groupOrder = [myGroup, ...Object.keys(groups).filter((g) => g !== myGroup)];
 
   return (
     <div className="space-y-4">
@@ -425,16 +414,23 @@ function StandingsTab({ matches, myGroup }: { matches: Match[]; myGroup: string 
           </div>
         );
       })}
-      <div className="flex items-center gap-3 text-[10px] text-gray-500">
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-green-100 border border-green-200"></span> Championship</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-100 border border-blue-200"></span> Shield</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-orange-100 border border-orange-200"></span> Plate</span>
-      </div>
+      {koComps.length > 0 && (
+        <div className="flex items-center gap-3 text-[10px] text-gray-500 flex-wrap">
+          {koComps.map((c: any, i: number) => {
+            const colors = ["bg-green-100 border-green-200", "bg-blue-100 border-blue-200", "bg-orange-100 border-orange-200"];
+            return (
+              <span key={c.key} className="flex items-center gap-1">
+                <span className={`w-3 h-3 rounded border ${colors[i] || "bg-gray-100 border-gray-200"}`}></span> {c.label}
+              </span>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
-function KnockoutTab({ matches, session, onRefresh }: { matches: any[]; session: Session; onRefresh: () => void }) {
+function KnockoutTab({ matches, session, onRefresh, pitchColors, koComps }: { matches: any[]; session: Session; onRefresh: () => void; pitchColors: Record<string, string>; koComps: any[] }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [s1, setS1] = useState("");
   const [s2, setS2] = useState("");
@@ -447,8 +443,8 @@ function KnockoutTab({ matches, session, onRefresh }: { matches: any[]; session:
   const [confirming, setConfirming] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
 
-  const comps = ["championship", "shield", "plate"];
-  const compLabels: Record<string, string> = { championship: "Championship", shield: "Shield", plate: "Plate" };
+  const comps = koComps.map((c) => c.key);
+  const compLabels = Object.fromEntries(koComps.map((c) => [c.key, c.label]));
   const roundLabels: Record<string, string> = { r16: "Round of 16", r1: "Round 1", qf: "Quarter-Final", sf: "Semi-Final", final: "Final" };
 
   const myKoMatches = matches.filter((m: any) =>
@@ -655,7 +651,7 @@ function KnockoutTab({ matches, session, onRefresh }: { matches: any[]; session:
                         <div className="flex items-center gap-2 mt-0.5">
                           {m.kickoff && <span className="text-[10px] text-gray-500">{m.kickoff}</span>}
                           {m.pitch && (
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PITCH_COLORS[m.pitch] || "bg-gray-200"}`}>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getPitchClass(pitchColors, m.pitch)}`}>
                               {m.pitch}
                             </span>
                           )}
@@ -795,7 +791,7 @@ function GoldenBootTab({ data }: { data: any[] }) {
   );
 }
 
-function InfoTab() {
+function InfoTab({ config }: { config: any }) {
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-bold">Info</h2>
@@ -803,9 +799,10 @@ function InfoTab() {
         <h3 className="font-bold">Group Stage Rules</h3>
         <ul className="list-disc pl-4 space-y-1 text-gray-700">
           <li>Win = 3 points, Draw = 1 point, Loss = 0 points</li>
-          <li>Games are 12 minutes (no half-time)</li>
-          <li>Top 2 from each group go to Championship knockout</li>
-          <li>3rd place goes to Shield, 4th to Plate</li>
+          <li>Games are {config?.gameDurationMins || 12} minutes (no half-time)</li>
+          {config?.koCompetitions?.map((c: any) => (
+            <li key={c.key}>{c.qualifyPositions.map((p: number) => p <= 2 ? `${p === 1 ? "1st" : "2nd"}` : `${p}${p === 3 ? "rd" : "th"}`).join(" & ")} place → {c.label}</li>
+          ))}
         </ul>
         <h3 className="font-bold mt-4">Score Reporting</h3>
         <ul className="list-disc pl-4 space-y-1 text-gray-700">
@@ -816,9 +813,6 @@ function InfoTab() {
         <h3 className="font-bold mt-4">Knockout</h3>
         <ul className="list-disc pl-4 space-y-1 text-gray-700">
           <li>If drawn after full time, straight to penalties</li>
-          <li>Championship: R16 13:40, QF 14:20, SF 14:44, Final 15:28</li>
-          <li>Shield: R1 14:04, QF 14:32, SF 14:56, Final 15:28</li>
-          <li>Plate: R1 14:28, SF 15:04, Final 15:28</li>
         </ul>
       </div>
     </div>

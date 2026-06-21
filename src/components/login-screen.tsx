@@ -2,30 +2,21 @@
 
 import { useState } from "react";
 import type { Session } from "@/app/page";
-
-const GROUPS: Record<string, string[]> = {
-  A: ["Covenant", "Mourne", "Spain Madrid", "Waringstown Presbyterian Church"],
-  B: ["Bethany FC", "Ballymagerney FPC", "YAKAAR ACADEMY", "Sloan Street Presbyterian"],
-  C: ["Grace Community Church Richhill", "Portabello Baptist", "NTPC", "Portadown Elim"],
-  D: ["Eagles", "Acpc fc", "Lurgan Elim", "Ulster wonders fc"],
-  E: ["Craigavon PC", "Newmills", "Bleary FC", "Benburb Ballers"],
-  F: ["Killicomaine Baptist church", "CGR FC", "CFPC Originals", "Gortmerron Goats"],
-  G: ["Ancora Church Football", "Legacurry Presbyterian", "Emmanuel Baptist", "Downshire Church"],
-  H: ["Derry/Edenderry", "The Blues", "Ardtrea Aardvarks", "Team Black"],
-};
-
-const ALL_TEAMS = Object.values(GROUPS).flat().sort();
+import { useTournament } from "@/lib/use-tournament";
 
 export function LoginScreen({ onLogin }: { onLogin: (s: Session) => void }) {
+  const { config, loading } = useTournament();
   const [team, setTeam] = useState("");
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const allTeams = config ? Object.values(config.groups).flat().sort() : [];
 
   async function handleTeamLogin(e: React.FormEvent) {
     e.preventDefault();
     if (!team || !pin) return;
-    setLoading(true);
+    setSubmitting(true);
     setError("");
     try {
       const res = await fetch("/api/auth", {
@@ -37,18 +28,12 @@ export function LoginScreen({ onLogin }: { onLogin: (s: Session) => void }) {
       if (data.error) {
         setError(data.error);
       } else {
-        onLogin({
-          role: "team",
-          teamId: data.teamId,
-          teamName: data.teamName,
-          group: data.group,
-          pin,
-        });
+        onLogin({ role: "team", teamId: data.teamId, teamName: data.teamName, group: data.group, pin });
       }
     } catch {
       setError("Network error — please try again.");
     }
-    setLoading(false);
+    setSubmitting(false);
   }
 
   async function handleAdminLogin() {
@@ -71,12 +56,15 @@ export function LoginScreen({ onLogin }: { onLogin: (s: Session) => void }) {
     }
   }
 
+  const tournamentName = config?.name || "Churches Cup";
+  const tournamentYear = config?.year || 2027;
+
   return (
     <div className="flex flex-col items-center justify-center min-h-dvh p-6 bg-gradient-to-b from-[#274296] to-[#1a2d6b]">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-1">Churches Cup</h1>
-          <p className="text-blue-200 text-lg">2027</p>
+          <h1 className="text-3xl font-bold text-white mb-1">{tournamentName}</h1>
+          <p className="text-blue-200 text-lg">{tournamentYear}</p>
         </div>
 
         <form onSubmit={handleTeamLogin} className="bg-white rounded-xl p-6 shadow-lg space-y-4">
@@ -86,9 +74,10 @@ export function LoginScreen({ onLogin }: { onLogin: (s: Session) => void }) {
               value={team}
               onChange={(e) => setTeam(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={loading}
             >
               <option value="">-- Select your team --</option>
-              {ALL_TEAMS.map((t) => (
+              {allTeams.map((t) => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
@@ -109,17 +98,15 @@ export function LoginScreen({ onLogin }: { onLogin: (s: Session) => void }) {
           </div>
 
           {error && (
-            <div className="bg-red-50 text-red-700 text-sm rounded-lg px-3 py-2 font-medium">
-              {error}
-            </div>
+            <div className="bg-red-50 text-red-700 text-sm rounded-lg px-3 py-2 font-medium">{error}</div>
           )}
 
           <button
             type="submit"
-            disabled={loading || !team || pin.length < 4}
+            disabled={submitting || !team || pin.length < 4}
             className="w-full bg-[#274296] text-white font-semibold py-3 rounded-lg hover:bg-[#1d3278] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {loading ? "Logging in..." : "Log In"}
+            {submitting ? "Logging in..." : "Log In"}
           </button>
         </form>
 
@@ -128,7 +115,7 @@ export function LoginScreen({ onLogin }: { onLogin: (s: Session) => void }) {
             onClick={() => onLogin({ role: "player" })}
             className="w-full bg-white/10 text-white font-semibold py-3 rounded-lg hover:bg-white/20 transition-colors backdrop-blur"
           >
-            👁 Player View
+            Player View
           </button>
           <button
             onClick={handleAdminLogin}

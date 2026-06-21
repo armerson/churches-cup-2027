@@ -1,7 +1,24 @@
 import {
-  pgTable, serial, text, integer, char, timestamp, time, check, unique, index,
+  pgTable, serial, text, integer, char, timestamp, time, check, unique, index, boolean, jsonb,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+
+export const tournament = pgTable("tournament", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().default("Churches Cup 2027"),
+  year: integer("year").notNull().default(2027),
+  teamsPerGroup: integer("teams_per_group").notNull().default(4),
+  gameDurationMins: integer("game_duration_mins").notNull().default(12),
+  maxSquadSize: integer("max_squad_size").notNull().default(20),
+  pitches: jsonb("pitches").notNull().default(sql`'["orange","blue","yellow","red"]'::jsonb`),
+  pitchColors: jsonb("pitch_colors").notNull().default(sql`'{"orange":"bg-orange-500 text-white","blue":"bg-[#274296] text-white","yellow":"bg-yellow-400 text-gray-900","red":"bg-red-600 text-white"}'::jsonb`),
+  groupStageGapMins: integer("group_stage_gap_mins").notNull().default(14),
+  groupStageStartTime: text("group_stage_start_time").notNull().default("10:00"),
+  koCompetitions: jsonb("ko_competitions").notNull().default(sql`'[{"key":"championship","label":"Championship","qualifyPositions":[1,2],"format":"r16"},{"key":"shield","label":"Shield","qualifyPositions":[3],"format":"r1-8"},{"key":"plate","label":"Plate","qualifyPositions":[4],"format":"r1-4"}]'::jsonb`),
+  setupComplete: boolean("setup_complete").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
 
 export const teams = pgTable("teams", {
   id: serial("id").primaryKey(),
