@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useTournament, getPitchClass } from "@/lib/use-tournament";
+import { useDarkMode } from "@/lib/use-dark-mode";
+import { useLiveData } from "@/lib/use-live-data";
 
 type Tab = "setup" | "schedule" | "teams" | "scores" | "knockout" | "golden-boot" | "notices" | "export";
 
@@ -44,6 +46,7 @@ type KoMatch = {
 
 export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const { config } = useTournament();
+  const { dark, toggle: toggleDark } = useDarkMode();
   const [tab, setTab] = useState<Tab>("scores");
   const [matches, setMatches] = useState<Match[]>([]);
   const [koMatches, setKoMatches] = useState<KoMatch[]>([]);
@@ -60,11 +63,8 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     if (g.ok) setGoldenBoot(await g.json());
   }, []);
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
+  useLiveData(fetchData);
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "setup", label: "Setup" },
@@ -85,7 +85,10 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
             <h1 className="text-lg font-bold">{config?.name || "Churches Cup"}</h1>
             <p className="text-blue-200 text-xs">Organiser Dashboard</p>
           </div>
-          <button onClick={onLogout} className="text-blue-200 text-xs hover:text-white">Logout</button>
+          <div className="flex items-center gap-3">
+            <button onClick={toggleDark} className="text-blue-200 text-xs hover:text-white">{dark ? "Light" : "Dark"}</button>
+            <button onClick={onLogout} className="text-blue-200 text-xs hover:text-white">Logout</button>
+          </div>
         </div>
       </header>
 
@@ -238,9 +241,51 @@ function AdminSetup({ config }: { config: any }) {
     { label: "Review", icon: "4" },
   ];
 
+  const [settingsPin, setSettingsPin] = useState("");
+  const [settingsThirdPlace, setSettingsThirdPlace] = useState(config?.thirdPlacePlayoff || false);
+  const [settingsMsg, setSettingsMsg] = useState("");
+
+  async function saveSettings() {
+    const updates: any = {};
+    if (settingsPin.trim()) updates.adminPin = settingsPin.trim();
+    updates.thirdPlacePlayoff = settingsThirdPlace;
+    const res = await fetch("/api/tournament", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "update", ...updates }),
+    });
+    if (res.ok) {
+      setSettingsMsg("Settings saved.");
+      setSettingsPin("");
+    } else {
+      setSettingsMsg("Error saving settings.");
+    }
+    setTimeout(() => setSettingsMsg(""), 3000);
+  }
+
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-bold">Tournament Setup</h2>
+
+      {config?.setupComplete && (
+        <div className="bg-white rounded-lg p-4 shadow-sm border space-y-3">
+          <h3 className="text-sm font-bold">Settings</h3>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Change Admin PIN</label>
+            <input type="text" value={settingsPin} onChange={(e) => setSettingsPin(e.target.value)}
+              placeholder="Leave blank to keep current" className="w-full border rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" checked={settingsThirdPlace} onChange={(e) => setSettingsThirdPlace(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-[#274296] focus:ring-[#274296]" />
+            <span className="text-sm text-gray-700">3rd/4th Place Playoff</span>
+          </label>
+          <button onClick={saveSettings} className="bg-[#274296] text-white text-xs font-semibold px-4 py-2 rounded-lg">
+            Save Settings
+          </button>
+          {settingsMsg && <p className="text-xs font-medium text-green-700">{settingsMsg}</p>}
+        </div>
+      )}
 
       <div className="flex gap-1">
         {steps.map((s, i) => (
@@ -990,9 +1035,18 @@ function AdminExport() {
     { type: "golden-boot", label: "Golden Boot", desc: "Top scorers list" },
   ];
 
+  const printUrl = "/print";
+
   return (
     <div className="space-y-3">
       <h2 className="text-lg font-bold">Export Data</h2>
+      <a href={printUrl} target="_blank" rel="noopener noreferrer"
+        className="block bg-white rounded-lg p-4 shadow-sm border hover:bg-gray-50 transition-colors">
+        <p className="font-semibold text-sm">Print Schedule</p>
+        <p className="text-xs text-gray-500 mt-0.5">Full day schedule — print or pin up</p>
+        <p className="text-xs text-[#274296] font-semibold mt-1">Open Print View</p>
+      </a>
+
       {exports.map((e) => (
         <a key={e.type} href={`/api/export?type=${e.type}`} download
           className="block bg-white rounded-lg p-4 shadow-sm border hover:bg-gray-50 transition-colors">

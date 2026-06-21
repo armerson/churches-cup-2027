@@ -2,11 +2,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useTournament, getPitchClass } from "@/lib/use-tournament";
+import { useDarkMode } from "@/lib/use-dark-mode";
+import { useLiveData } from "@/lib/use-live-data";
 
 type Tab = "live" | "fixtures" | "standings" | "knockout" | "boot" | "info";
 
 export function PlayerView({ onBack }: { onBack: () => void }) {
   const { config } = useTournament();
+  const { dark, toggle: toggleDark } = useDarkMode();
   const [tab, setTab] = useState<Tab>("live");
   const [matches, setMatches] = useState<any[]>([]);
   const [koMatches, setKoMatches] = useState<any[]>([]);
@@ -23,11 +26,8 @@ export function PlayerView({ onBack }: { onBack: () => void }) {
     if (g.ok) setGoldenBoot(await g.json());
   }, []);
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
+  useLiveData(fetchData);
 
   const groups = config?.groups || {};
   const pitchColors = config?.pitchColors || {};
@@ -51,7 +51,10 @@ export function PlayerView({ onBack }: { onBack: () => void }) {
             <h1 className="text-lg font-bold">{tournamentName}</h1>
             <p className="text-blue-200 text-xs">Player View</p>
           </div>
-          <button onClick={onBack} className="text-blue-200 text-xs hover:text-white">Back</button>
+          <div className="flex items-center gap-3">
+            <button onClick={toggleDark} className="text-blue-200 text-xs hover:text-white">{dark ? "Light" : "Dark"}</button>
+            <button onClick={onBack} className="text-blue-200 text-xs hover:text-white">Back</button>
+          </div>
         </div>
       </header>
 

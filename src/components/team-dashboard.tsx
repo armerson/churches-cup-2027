@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Session } from "@/app/page";
 import { useTournament, getPitchClass } from "@/lib/use-tournament";
+import { useDarkMode } from "@/lib/use-dark-mode";
+import { useLiveData } from "@/lib/use-live-data";
 
 type Tab = "fixtures" | "submit" | "confirm" | "standings" | "knockout" | "roster" | "boot" | "info";
 
@@ -23,6 +25,7 @@ type Match = {
 
 export function TeamDashboard({ session, onLogout }: { session: Session; onLogout: () => void }) {
   const { config } = useTournament();
+  const { dark, toggle: toggleDark } = useDarkMode();
   const [tab, setTab] = useState<Tab>("fixtures");
   const [matches, setMatches] = useState<Match[]>([]);
   const [koMatches, setKoMatches] = useState<any[]>([]);
@@ -44,11 +47,8 @@ export function TeamDashboard({ session, onLogout }: { session: Session; onLogou
     if (g.ok) setGoldenBoot(await g.json());
   }, []);
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
+  useLiveData(fetchData);
 
   const myMatches = matches.filter(
     (m) => m.team1 === session.teamName || m.team2 === session.teamName
@@ -82,7 +82,10 @@ export function TeamDashboard({ session, onLogout }: { session: Session; onLogou
             <h1 className="text-lg font-bold">{tournamentName}</h1>
             <p className="text-blue-200 text-xs">{session.teamName} — Group {session.group}</p>
           </div>
-          <button onClick={onLogout} className="text-blue-200 text-xs hover:text-white">Logout</button>
+          <div className="flex items-center gap-3">
+            <button onClick={toggleDark} className="text-blue-200 text-xs hover:text-white">{dark ? "Light" : "Dark"}</button>
+            <button onClick={onLogout} className="text-blue-200 text-xs hover:text-white">Logout</button>
+          </div>
         </div>
       </header>
 
