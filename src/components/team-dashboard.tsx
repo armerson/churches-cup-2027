@@ -69,12 +69,17 @@ export function TeamDashboard({ session, onLogout }: { session: Session; onLogou
     (m) => m.status === "pending" && m.submittedBy !== session.teamId
   );
 
+  const pendingKoConfirm = koMatches.filter(
+    (m: any) => m.status === "pending" && m.submittedBy !== session.teamId &&
+    (m.team1Id === session.teamId || m.team2Id === session.teamId)
+  );
+
   const tabs: { id: Tab; label: string; badge?: number }[] = [
     { id: "fixtures", label: "Fixtures" },
     { id: "submit", label: "Report" },
     { id: "confirm", label: "Confirm", badge: pendingConfirm.length },
     { id: "standings", label: "Table" },
-    { id: "knockout", label: "KO" },
+    { id: "knockout", label: "KO", badge: pendingKoConfirm.length },
     { id: "roster", label: "Roster" },
     { id: "boot", label: "Boot" },
     { id: "info", label: "Info" },
@@ -124,7 +129,7 @@ export function TeamDashboard({ session, onLogout }: { session: Session; onLogou
         {tab === "submit" && <SubmitTab matches={myMatches} session={session} onSubmitted={fetchData} />}
         {tab === "confirm" && <ConfirmTab matches={pendingConfirm} session={session} onConfirmed={fetchData} />}
         {tab === "standings" && <StandingsTab matches={matches} myGroup={session.group!} />}
-        {tab === "knockout" && <KnockoutTab matches={koMatches} />}
+        {tab === "knockout" && <KnockoutTab matches={koMatches} session={session} onRefresh={fetchData} />}
         {tab === "roster" && <RosterTab session={session} />}
         {tab === "boot" && <GoldenBootTab data={goldenBoot} />}
         {tab === "info" && <InfoTab />}
@@ -429,10 +434,81 @@ function StandingsTab({ matches, myGroup }: { matches: Match[]; myGroup: string 
   );
 }
 
-function KnockoutTab({ matches }: { matches: any[] }) {
+function KnockoutTab({ matches, session, onRefresh }: { matches: any[]; session: Session; onRefresh: () => void }) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [s1, setS1] = useState("");
+  const [s2, setS2] = useState("");
+  const [ps1, setPs1] = useState("");
+  const [ps2, setPs2] = useState("");
+  const [winnerId, setWinnerId] = useState<number | null>(null);
+  const [myScorers, setMyScorers] = useState<string[]>([]);
+  const [oppScorers, setOppScorers] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [msg, setMsg] = useState("");
+
   const comps = ["championship", "shield", "plate"];
   const compLabels: Record<string, string> = { championship: "Championship", shield: "Shield", plate: "Plate" };
   const roundLabels: Record<string, string> = { r16: "Round of 16", r1: "Round 1", qf: "Quarter-Final", sf: "Semi-Final", final: "Final" };
+
+  const myKoMatches = matches.filter((m: any) =>
+    m.team1Id === session.teamId || m.team2Id === session.teamId
+  );
+
+  async function handleSubmit(m: any) {
+    const isTeam1 = m.team1Id === session.teamId;
+    const sc1 = Number(s1);
+    const sc2 = Number(s2);
+    const apiScore1 = isTeam1 ? sc1 : sc2;
+    const apiScore2 = isTeam1 ? sc2 : sc1;
+    let w = winnerId;
+    if (apiScore1 > apiScore2) w = m.team1Id;
+    else if (apiScore2 > apiScore1) w = m.team2Id;
+
+    const myGoals = sc1;
+    const oppGoals = sc2;
+    if (myGoals > 0 && myScorers.slice(0, myGoals).some((s) => !s.trim())) return;
+    if (oppGoals > 0 && oppScorers.slice(0, oppGoals).some((s) => !s.trim())) return;
+
+    setBusy(true);
+    setMsg("");
+    const res = await fetch("/api/knockout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "submit",
+        matchId: m.matchId,
+        score1: apiScore1,
+        score2: apiScore2,
+        penScore1: apiScore1 === apiScore2 ? Number(ps1) : null,
+        penScore2: apiScore1 === apiScore2 ? Number(ps2) : null,
+        winnerId: w,
+        submittedById: session.teamId,
+        myScorers: myScorers.slice(0, myGoals).map((s) => s.trim()),
+        oppScorers: oppScorers.slice(0, oppGoals).map((s) => s.trim()),
+      }),
+    });
+    const data = await res.json();
+    setBusy(false);
+    if (data.error) {
+      setMsg(data.error);
+    } else {
+      setMsg("KO result submitted! Waiting for opponent to confirm.");
+      setEditing(null);
+      onRefresh();
+    }
+  }
+
+  async function handleAction(matchId: string, act: "confirm" | "dispute") {
+    setConfirming(matchId);
+    await fetch("/api/knockout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: act, matchId, confirmedById: session.teamId }),
+    });
+    setConfirming(null);
+    onRefresh();
+  }
 
   if (matches.length === 0) return (
     <div>
@@ -444,6 +520,123 @@ function KnockoutTab({ matches }: { matches: any[] }) {
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-bold">Knockout</h2>
+
+      {myKoMatches.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-xs font-bold text-[#274296] uppercase tracking-wider">Your KO Matches</h3>
+          {myKoMatches.map((m: any) => {
+            const isTeam1 = m.team1Id === session.teamId;
+            const opp = isTeam1 ? m.team2Name : m.team1Name;
+            const canSubmit = m.status === "upcoming" && m.team1Id && m.team2Id;
+            const canConfirm = m.status === "pending" && m.submittedBy !== session.teamId;
+            const myScore = isTeam1 ? m.score1 : m.score2;
+            const oppScore = isTeam1 ? m.score2 : m.score1;
+
+            return (
+              <div key={m.matchId} className="bg-white rounded-lg p-3 shadow-sm border space-y-2">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="font-semibold text-sm">{session.teamName} vs {opp}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-gray-500 uppercase">{compLabels[m.competition]} — {roundLabels[m.round] || m.round}</span>
+                      {m.kickoff && <span className="text-[10px] text-gray-500">{m.kickoff}</span>}
+                    </div>
+                  </div>
+                  {m.winnerId ? (
+                    <div className="text-right">
+                      <span className="text-lg font-bold">{myScore}–{oppScore}</span>
+                      {m.penScore1 !== null && <span className="block text-[10px] text-gray-500">Pens: {m.penScore1}–{m.penScore2}</span>}
+                      <span className={`block text-[10px] font-medium ${
+                        m.status === "confirmed" ? "text-green-600" : m.status === "disputed" ? "text-red-600" : "text-amber-600"
+                      }`}>{m.status}</span>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-400">{m.status === "pending" ? "pending" : "—"}</span>
+                  )}
+                </div>
+
+                {canConfirm && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-gray-600">Opponent submitted: <span className="font-bold">{myScore}–{oppScore}</span>
+                      {m.penScore1 !== null && <span> (Pens: {m.penScore1}–{m.penScore2})</span>}
+                    </p>
+                    <div className="flex gap-2">
+                      <button onClick={() => handleAction(m.matchId, "confirm")} disabled={confirming === m.matchId}
+                        className="flex-1 bg-green-600 text-white font-semibold py-2 rounded-lg text-sm disabled:opacity-50">Confirm</button>
+                      <button onClick={() => handleAction(m.matchId, "dispute")} disabled={confirming === m.matchId}
+                        className="flex-1 bg-red-600 text-white font-semibold py-2 rounded-lg text-sm disabled:opacity-50">Dispute</button>
+                    </div>
+                  </div>
+                )}
+
+                {canSubmit && editing !== m.matchId && (
+                  <button onClick={() => { setEditing(m.matchId); setS1(""); setS2(""); setPs1(""); setPs2(""); setWinnerId(null); setMyScorers([]); setOppScorers([]); setMsg(""); }}
+                    className="text-[11px] text-[#274296] font-semibold hover:underline">Submit Result</button>
+                )}
+
+                {editing === m.matchId && (
+                  <div className="space-y-3 pt-2 border-t">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1">
+                        <label className="block text-[10px] font-semibold text-gray-500 mb-1">{session.teamName}</label>
+                        <input type="number" min="0" max="99" value={s1} onChange={(e) => { setS1(e.target.value); setMyScorers([]); }}
+                          className="w-full border rounded px-2 py-2 text-center text-lg font-bold" />
+                      </div>
+                      <span className="text-gray-400 mt-4">–</span>
+                      <div className="flex-1">
+                        <label className="block text-[10px] font-semibold text-gray-500 mb-1">{opp}</label>
+                        <input type="number" min="0" max="99" value={s2} onChange={(e) => { setS2(e.target.value); setOppScorers([]); }}
+                          className="w-full border rounded px-2 py-2 text-center text-lg font-bold" />
+                      </div>
+                    </div>
+
+                    <ScorerInputs count={Number(s1) || 0} scorers={myScorers} onChange={setMyScorers} label={`${session.teamName} scorers`} />
+                    <ScorerInputs count={Number(s2) || 0} scorers={oppScorers} onChange={setOppScorers} label={`${opp} scorers`} />
+
+                    {s1 && s2 && Number(s1) === Number(s2) && (
+                      <div className="space-y-2">
+                        <p className="text-xs text-gray-500 font-medium">Penalty shootout:</p>
+                        <div className="flex items-center gap-2">
+                          <input type="number" min="0" max="99" value={ps1} onChange={(e) => setPs1(e.target.value)}
+                            className="w-14 border rounded px-2 py-1.5 text-center text-sm font-bold" />
+                          <span className="text-gray-400">–</span>
+                          <input type="number" min="0" max="99" value={ps2} onChange={(e) => setPs2(e.target.value)}
+                            className="w-14 border rounded px-2 py-1.5 text-center text-sm font-bold" />
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => setWinnerId(isTeam1 ? m.team1Id : m.team2Id)}
+                            className={`text-xs px-3 py-1.5 rounded-lg font-semibold ${winnerId === (isTeam1 ? m.team1Id : m.team2Id) ? "bg-green-600 text-white" : "bg-gray-100"}`}>
+                            {session.teamName} wins
+                          </button>
+                          <button onClick={() => setWinnerId(isTeam1 ? m.team2Id : m.team1Id)}
+                            className={`text-xs px-3 py-1.5 rounded-lg font-semibold ${winnerId === (isTeam1 ? m.team2Id : m.team1Id) ? "bg-green-600 text-white" : "bg-gray-100"}`}>
+                            {opp} wins
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      <button onClick={() => handleSubmit(m)} disabled={busy || !s1 || !s2}
+                        className="flex-1 bg-green-600 text-white text-sm font-semibold py-2 rounded-lg disabled:opacity-50">
+                        {busy ? "Submitting..." : "Submit"}
+                      </button>
+                      <button onClick={() => setEditing(null)} className="text-gray-400 text-xs px-3">Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {msg && (
+        <div className={`text-sm font-medium rounded-lg px-3 py-2 ${
+          msg.includes("error") || msg.includes("Error") ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"
+        }`}>{msg}</div>
+      )}
+
       {comps.map((comp) => {
         const compMatches = matches.filter((m: any) => m.competition === comp);
         if (compMatches.length === 0) return null;
@@ -472,6 +665,9 @@ function KnockoutTab({ matches }: { matches: any[] }) {
                         <div className="text-right">
                           <span className="text-lg font-bold">{m.score1}–{m.score2}</span>
                           {m.penScore1 !== null && <span className="block text-[10px] text-gray-500">Pens: {m.penScore1}–{m.penScore2}</span>}
+                          <span className={`block text-[10px] font-medium ${
+                            m.status === "confirmed" ? "text-green-600" : m.status === "disputed" ? "text-red-600" : "text-amber-600"
+                          }`}>{m.status}</span>
                         </div>
                       ) : (
                         <span className="text-xs text-gray-400">{m.kickoff || "TBC"}</span>
