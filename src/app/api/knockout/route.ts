@@ -121,29 +121,31 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 }
 
-const NEXT_MATCH: Record<string, { target: string; slot: 1 | 2 }> = {
-  "c-r16-1": { target: "c-qf-1", slot: 1 }, "c-r16-2": { target: "c-qf-1", slot: 2 },
-  "c-r16-3": { target: "c-qf-2", slot: 1 }, "c-r16-4": { target: "c-qf-2", slot: 2 },
-  "c-r16-5": { target: "c-qf-3", slot: 1 }, "c-r16-6": { target: "c-qf-3", slot: 2 },
-  "c-r16-7": { target: "c-qf-4", slot: 1 }, "c-r16-8": { target: "c-qf-4", slot: 2 },
-  "c-qf-1": { target: "c-sf-1", slot: 1 }, "c-qf-2": { target: "c-sf-1", slot: 2 },
-  "c-qf-3": { target: "c-sf-2", slot: 1 }, "c-qf-4": { target: "c-sf-2", slot: 2 },
-  "c-sf-1": { target: "c-final", slot: 1 }, "c-sf-2": { target: "c-final", slot: 2 },
-  "s-r1-1": { target: "s-qf-1", slot: 1 }, "s-r1-2": { target: "s-qf-1", slot: 2 },
-  "s-r1-3": { target: "s-qf-2", slot: 1 }, "s-r1-4": { target: "s-qf-2", slot: 2 },
-  "s-r1-5": { target: "s-qf-3", slot: 1 }, "s-r1-6": { target: "s-qf-3", slot: 2 },
-  "s-r1-7": { target: "s-qf-4", slot: 1 }, "s-r1-8": { target: "s-qf-4", slot: 2 },
-  "s-qf-1": { target: "s-sf-1", slot: 1 }, "s-qf-2": { target: "s-sf-1", slot: 2 },
-  "s-qf-3": { target: "s-sf-2", slot: 1 }, "s-qf-4": { target: "s-sf-2", slot: 2 },
-  "s-sf-1": { target: "s-final", slot: 1 }, "s-sf-2": { target: "s-final", slot: 2 },
-  "p-r1-1": { target: "p-sf-1", slot: 1 }, "p-r1-2": { target: "p-sf-1", slot: 2 },
-  "p-r1-3": { target: "p-sf-2", slot: 1 }, "p-r1-4": { target: "p-sf-2", slot: 2 },
-  "p-sf-1": { target: "p-final", slot: 1 }, "p-sf-2": { target: "p-final", slot: 2 },
-};
+const ROUND_ORDER = ["r16", "r1", "qf", "sf", "final"];
 
 async function advanceWinner(matchId: string, winnerId: number) {
-  const next = NEXT_MATCH[matchId];
-  if (!next) return;
-  const updateField = next.slot === 1 ? { team1Id: winnerId } : { team2Id: winnerId };
-  await getDb().update(koMatches).set({ ...updateField, updatedAt: new Date() }).where(eq(koMatches.matchId, next.target));
+  const allMatches = await getDb().select().from(koMatches);
+  const current = allMatches.find((m) => m.matchId === matchId);
+  if (!current) return;
+
+  const compMatches = allMatches.filter((m) => m.competition === current.competition);
+  const roundIdx = ROUND_ORDER.indexOf(current.round);
+  if (roundIdx === -1) return;
+
+  const nextRound = ROUND_ORDER.slice(roundIdx + 1).find((r) =>
+    compMatches.some((m) => m.round === r)
+  );
+  if (!nextRound) return;
+
+  const nextRoundMatches = compMatches
+    .filter((m) => m.round === nextRound)
+    .sort((a, b) => a.matchNum - b.matchNum);
+
+  const targetIdx = Math.floor((current.matchNum - 1) / 2);
+  const slot: 1 | 2 = current.matchNum % 2 === 1 ? 1 : 2;
+  const target = nextRoundMatches[targetIdx];
+  if (!target) return;
+
+  const updateField = slot === 1 ? { team1Id: winnerId } : { team2Id: winnerId };
+  await getDb().update(koMatches).set({ ...updateField, updatedAt: new Date() }).where(eq(koMatches.matchId, target.matchId));
 }
